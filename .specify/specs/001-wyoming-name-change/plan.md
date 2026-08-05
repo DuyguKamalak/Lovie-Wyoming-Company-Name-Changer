@@ -1,6 +1,6 @@
 # Plan 001: Wyoming Company Name Change Assistant
 
-Status: DRAFT — pending user sign-off
+Status: APPROVED
 Depends on: `spec.md` (approved)
 
 ## 1. Architecture overview
@@ -163,12 +163,16 @@ assets/forms/
   corp-amendment-form-p.pdf
 ```
 
-State (conversation history, knownFields, entityType) is passed
-`app/page.tsx` → `chat` → `review` via client-side state
-(`useState`/`useReducer` lifted to a small context, or query-free in-memory
-router state) — no `localStorage`/cookies needed since nothing survives a
-page refresh by design (acceptable: refreshing mid-flow means starting over,
-which is fine for a stateless, no-account tool).
+State (conversation history, knownFields, entityType) is held in a small
+client-side context (`useReducer`) and **mirrored to `sessionStorage`** on
+every change, restored on mount — so a refresh mid-chat/mid-review does not
+lose progress. `sessionStorage` (not `localStorage`) is a deliberate choice:
+it survives a refresh but clears automatically when the tab/browser closes,
+which keeps constitution §III's spirit (nothing lingers indefinitely) while
+fixing the "don't lose my answers on refresh" requirement. This is still
+100% client-only — the server never sees or stores this state; it's just
+the browser's own storage, same privacy posture as before. Add an explicit
+"Start over" action that clears it, for users who want to discard mid-flow.
 
 ## 7. Environment & deployment
 
@@ -201,10 +205,10 @@ manual check: open the live URLs
 sos.wyo.gov/Forms/Business/PROF/P-Amendment.pdf) in a normal browser and
 diff against the vendored copies. Tracked as a task in `tasks.md`.
 
-## 10. Open items for sign-off
+## 10. Decisions (signed off)
 
-1. OK to flatten the generated PDF (§5 above), or should it stay editable?
-2. OK with fully stateless client-side conversation state (no
-   localStorage) — a refresh mid-chat loses progress?
-3. Any preference on Gemini SDK (`@google/genai` vs raw REST) — plan
-   assumes whichever is current/stable at implementation time.
+1. Generated PDF is flattened before download (§5).
+2. Conversation/review state survives a page refresh via `sessionStorage`,
+   client-only, cleared on tab close or explicit "Start over" (§6).
+3. Gemini SDK: whichever is current/stable at implementation time — no
+   pinned preference.

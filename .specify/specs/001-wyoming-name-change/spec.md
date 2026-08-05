@@ -1,6 +1,6 @@
 # Feature Spec 001: Wyoming Company Name Change Assistant
 
-Status: DRAFT — pending user sign-off
+Status: APPROVED
 Owner: (repo owner)
 
 ## 1. Overview
