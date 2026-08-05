@@ -1,0 +1,210 @@
+# Plan 001: Wyoming Company Name Change Assistant
+
+Status: DRAFT — pending user sign-off
+Depends on: `spec.md` (approved)
+
+## 1. Architecture overview
+
+```
+Browser (React, client-side state only)
+   │
+   │  POST /api/chat            { history, entityType, knownFields }
+   │  →  { reply, knownFields, readyForReview }
+   │
+   │  POST /api/generate-pdf    { entityType, fields }
+   │  →  application/pdf (streamed download)
+   ▼
+Next.js App Router, deployed on Vercel (serverless functions)
+   │
+   ├─ /api/chat        → calls Google Gemini (structured output)
+   └─ /api/generate-pdf → pdf-lib fills assets/forms/*.pdf, returns bytes
+```
+
+- **No database, no session store.** Every request is self-contained: the
+  browser holds the conversation + extracted fields in React state and
+  resends what's needed. This is what makes constitution §III (privacy by
+  default) trivial to satisfy — the server has nothing to leak because it
+  never stores anything past the response.
+- **Two API routes only.** Chat/extraction and PDF generation are cleanly
+  separated: the chat route never touches a PDF, the PDF route never talks
+  to Gemini. Keeps each route's failure modes independent (e.g., Gemini
+  free-tier rate limit shouldn't affect the PDF step, since by that point
+  extraction is already done and reviewed).
+
+## 2. Data model
+
+```ts
+// lib/types.ts
+type EntityType = "llc" | "corp";
+
+interface LlcFields {
+  currentName: string;
+  dateOfOriginalFiling: string;      // mm/dd/yyyy
+  articleNumber: string;             // e.g. "1"
+  newName: string;                   // used to compose `amendmentText`
+  amendmentText: string;             // full article text, user-editable
+  signatureDate: string;
+  signerName: string;
+  signerTitle: string;
+  contactPerson: string;
+  phone: string;
+  email: string;
+}
+
+interface CorpFields {
+  currentName: string;
+  articleNumber: string;
+  newName: string;
+  amendmentText: string;             // full article text, user-editable
+  amendmentDate: string;
+  approval: "incorporators" | "board" | "shareholders";
+  signatureDate: string;
+  signerName: string;
+  signerTitle: string;
+  contactPerson: string;
+  phone: string;
+  email: string;
+}
+```
+
+`amendmentText` is always derived by a template function first
+(`composeAmendmentText(entityType, articleNumber, newName)` →
+`"Article {n}. The name of the {limited liability company|corporation} is
+{newName}."`) and then shown as an editable field on the review screen —
+per spec §5.3, the user must be able to see/adjust the exact wording that
+gets filed.
+
+`exchange, reclassification, cancellation` (corp form) and the checklist
+self-check boxes (§5.1/§5.2 of spec.md) are **not** part of the typed data
+model — they're either left blank (irrelevant to a name change) or handled
+as a fixed default at fill time, never asked about in chat.
+
+## 3. Conversation & extraction design (`/api/chat`)
+
+- Google Gemini (`gemini-2.0-flash`, model name in an env var
+  `GEMINI_MODEL` so it can be bumped without a code change) called with
+  **structured output** (`responseSchema` / function-calling — whichever
+  the current SDK favors at implementation time) constrained to a partial
+  `LlcFields`/`CorpFields` shape, so each turn either:
+  1. returns updated known fields + a follow-up question (fields still
+     missing/ambiguous), or
+  2. returns updated known fields + `readyForReview: true` once every
+     required field for the selected entity type is present and the name
+     has a valid designator (FR-005).
+- System prompt encodes: ask entity type first (FR-001), never give legal
+  advice, ask one clear question at a time, validate the new name ends in
+  an appropriate designator, and — importantly — once it has current name +
+  new name + article number, compose a draft `amendmentText` and show it to
+  the user in the chat for a sanity check before marking ready-for-review.
+- The route is stateless: the client sends the full running `knownFields`
+  object plus the latest user message each call; Gemini's job is only to
+  fill gaps and ask the next question, not to remember previous turns
+  itself beyond what's in the request.
+- Gemini free-tier errors (429/rate limit) surface as a typed error the
+  client renders as "please try again in a moment" (NFR-001/spec Open
+  Question 4) — never silently retried against a paid fallback (constitution §I).
+
+## 4. Review screen
+
+Plain React form (not chat) rendering every field from §2's model with
+labels matching the PDF's own field meanings (spec.md §5 tables) — one
+input per field, `amendmentText` as a multi-line textarea. The disclaimer
+(FR-007) renders directly above the download button, not just once at the
+top of the page. Client-side validation mirrors FR-005 (designator check)
+before enabling download.
+
+## 5. PDF generation (`/api/generate-pdf`)
+
+```
+lib/pdf/fillLlc.ts
+lib/pdf/fillCorp.ts
+```
+
+- Load the vendored PDF bytes from `assets/forms/llc-amendment.pdf` or
+  `assets/forms/corp-amendment-form-p.pdf` (bundled at build time, read
+  once, cached in module scope — no network fetch at request time, so this
+  never depends on `sos.wyo.gov` being reachable in production).
+- `pdf-lib`: `PDFDocument.load(bytes)` → `form.getTextField(name).setText(value)`
+  for every `/Tx` field named in spec.md §5.1/§5.2; `form.getCheckBox(name).check()`
+  for the one approval box on the corp form (leave the other two — and all
+  checklist self-check boxes — at their default `/Off`).
+- Call `form.updateFieldAppearances()` before flattening so text renders
+  correctly across PDF viewers (some viewers respect `/NeedAppearances`
+  inconsistently — don't rely on it).
+- `form.flatten()` before returning bytes: this is a final document meant
+  for printing/signing/mailing, not further digital editing, and flattening
+  avoids any viewer-specific rendering quirks with un-flattened form
+  fields. (Tradeoff noted for sign-off: flattening means the user can't
+  tweak the PDF further themselves in Acrobat after download — acceptable
+  since the review screen is the edit point, and they can always regenerate.)
+- Response: `Content-Type: application/pdf`, `Content-Disposition: attachment;
+  filename="wyoming-{entityType}-amendment.pdf"`. No temp file written to
+  disk — bytes go straight from `pdf-lib` into the response body (keeps
+  constitution §III trivially true here too).
+
+## 6. Project structure
+
+```
+app/
+  page.tsx                  # landing page + disclaimer + CTA
+  chat/page.tsx              # chat UI (client component)
+  review/page.tsx            # review screen (client component)
+  api/chat/route.ts
+  api/generate-pdf/route.ts
+lib/
+  types.ts
+  gemini.ts                  # thin client wrapper + system prompt
+  composeAmendment.ts         # amendment-text template function
+  pdf/fillLlc.ts
+  pdf/fillCorp.ts
+  validation.ts               # designator checks etc.
+assets/forms/
+  llc-amendment.pdf
+  corp-amendment-form-p.pdf
+```
+
+State (conversation history, knownFields, entityType) is passed
+`app/page.tsx` → `chat` → `review` via client-side state
+(`useState`/`useReducer` lifted to a small context, or query-free in-memory
+router state) — no `localStorage`/cookies needed since nothing survives a
+page refresh by design (acceptable: refreshing mid-flow means starting over,
+which is fine for a stateless, no-account tool).
+
+## 7. Environment & deployment
+
+- `.env.local` (dev) / Vercel project env vars (prod): `GEMINI_API_KEY`,
+  `GEMINI_MODEL` (default `gemini-2.0-flash`). Never sent to the client —
+  only read inside `app/api/*/route.ts` server code.
+- Vercel free tier, no custom infra. `npm run build` must pass before any
+  push (per CLAUDE.md).
+
+## 8. Testing strategy
+
+- **Smoke test (do this first, task 1)**: script that loads both vendored
+  PDFs with `pdf-lib`, fills every field with dummy data, saves to a temp
+  file, and confirms the field values round-trip — catches any field-name
+  typo or library-compatibility surprise before the rest of the flow is
+  built on top of it (spec Open Question 5).
+- Unit tests for `composeAmendmentText` (both entity types) and
+  `validation.ts` (designator checks — accepts "LLC", "L.L.C.", "Limited
+  Liability Company"; rejects/warns on missing designator; corp equivalents).
+- Manual QA against spec.md §9 acceptance criteria: full flow for both
+  entity types, opened output PDF compared against a blank official form.
+
+## 9. Pre-launch risk: form staleness
+
+This sandbox cannot reach `sos.wyo.gov` (network policy), so the vendored
+PDFs were verified by field-structure extraction + the form's own embedded
+"Revised June 2021" metadata, not a live fetch. **Before shipping**, do one
+manual check: open the live URLs
+(sos.wyo.gov/forms/business/llc/llc-amendment.pdf,
+sos.wyo.gov/Forms/Business/PROF/P-Amendment.pdf) in a normal browser and
+diff against the vendored copies. Tracked as a task in `tasks.md`.
+
+## 10. Open items for sign-off
+
+1. OK to flatten the generated PDF (§5 above), or should it stay editable?
+2. OK with fully stateless client-side conversation state (no
+   localStorage) — a refresh mid-chat loses progress?
+3. Any preference on Gemini SDK (`@google/genai` vs raw REST) — plan
+   assumes whichever is current/stable at implementation time.
