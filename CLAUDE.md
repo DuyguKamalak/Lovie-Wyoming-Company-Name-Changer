@@ -62,6 +62,13 @@ Populated once the Next.js app is scaffolded (see `plan.md`):
 - `npm run lint` — lint
 - `npm test` — unit tests
 
+## Next.js version notes
+
+See @AGENTS.md — auto-generated/maintained by the Next.js tooling itself
+(regenerated on `next dev`/`next build`), documenting breaking changes for
+whichever Next.js major version this repo is pinned to. Read it before
+writing framework-level code; don't hand-edit it, it gets overwritten.
+
 ## Useful skills for this project
 
 - `pdf` — filling/inspecting AcroForm fields on the official SOS PDFs.
