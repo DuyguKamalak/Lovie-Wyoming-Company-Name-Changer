@@ -71,39 +71,75 @@ guidance) — the deliverable is the paperwork, ready to print, sign, and mail.
 4. **Download**: on confirmation, the server fills the correct official PDF
    and returns it as a file download. No account, no email required.
 
-## 5. Data fields required per entity type
+## 5. Data fields — verified against the real official PDFs
 
-Based on the current official Wyoming SOS forms:
+The actual official forms are vendored in the repo (source: sos.wyo.gov,
+provided directly by the user) and their AcroForm fields have been
+extracted and confirmed field-by-field, including visual top-to-bottom
+verification of checkbox ordering against the printed option text:
 
-### 5.1 LLC — "Amendment to Articles of Organization"
-- Current legal LLC name (exactly as on file with Wyoming SOS)
-- Wyoming SOS filing ID / registration number (if known — optional but
-  recommended, speeds up state processing)
-- Date of original Articles of Organization filing
-- Article number being amended (default: the article containing the entity
-  name, typically Article 1 — assistant should explain this)
-- Full text of the new article (i.e., the new company name), which must end
-  in an approved LLC designator (LLC, L.L.C., Limited Liability Company)
-- Name and title of the person signing (authorized person/manager/member)
-- Date of signing
+- `assets/forms/llc-amendment.pdf` — "LLC-Amendment", Rev. June 2021, 1 page
+- `assets/forms/corp-amendment-form-p.pdf` — "P-Amendment", Rev. June 2021, 2 pages
 
-### 5.2 C-Corporation — "Articles of Amendment" (Form P)
-- Current legal corporate name (exactly as on file)
-- Wyoming SOS filing ID / registration number (if known)
-- Date of original Articles of Incorporation filing
-- New corporate name, ending in an approved corporate designator
-  (Inc., Incorporated, Corporation, Corp., Co., Company, or Limited/Ltd.)
-- Article being amended
-- Whether the amendment was adopted by directors only, or by
-  directors + shareholder vote (affects which certification statement/
-  checkbox is used on Form P) — assistant must ask this
-- Name and title of the signing officer
-- Date of signing
+### 5.1 LLC — `assets/forms/llc-amendment.pdf`
 
-*(Exact official AcroForm field names for both PDFs still need to be
-confirmed against the live files — see Open Questions §8. The field list
-above is the human-meaning data; §8's task is mapping it 1:1 to the PDF's
-actual form fields during `plan.md`.)*
+| PDF field name | Meaning |
+|---|---|
+| `name of llc` | Current LLC legal name — must match SOS records exactly |
+| `date of filing` | Date the original Articles of Organization were filed |
+| `amended article #` | Article number being amended (not the filing ID — use the existing article number for the name clause, or the next sequential number if adding a new article) |
+| `amendment` | **Full text of the amended article** (assistant-composed, e.g. "Article 1. The name of the limited liability company is Acme Holdings LLC.") — see §5.3 |
+| `date` | Signature date |
+| `print name` | Name of the person signing (must be authorized by the company) |
+| `title` | Signer's title |
+| `contact` | Contact person (may equal signer) |
+| `phone` | Daytime phone number |
+| `email` | **Required** — SOS sends filing evidence/notices here |
+| `Check Box7.0`–`.3` | Four self-check boxes mirroring the printed checklist (filing fee, processing time, mail-don't-email, review-before-submitting). Not legal data — optional, default unchecked. |
+
+**There is no SOS filing/registration ID field anywhere on this form.** It is
+not part of the data model (this resolves former Open Question 2).
+
+### 5.2 Corporation — `assets/forms/corp-amendment-form-p.pdf`
+
+| PDF field name | Meaning |
+|---|---|
+| `Corporation name` | Current legal name — must match SOS records exactly |
+| `Article number being amended` | Article number being amended |
+| `Amendment` | **Full text of the amended article** (assistant-composed) — see §5.3 |
+| `exchange, reclassification, cancellation` | Only relevant if the amendment also changes share structure. Irrelevant to a pure name change — leave blank, don't ask. |
+| `amendment date` | Date the amendment was adopted |
+| `date` | Signature date |
+| `printed name` | Signer's name (Chairman, President, or another officer) |
+| `title` | Signer's title |
+| `contact person`, `daytime phone number`, `email` | Contact info; email required |
+| `Filing fee`, `Processing`, `Refer`, `review before submitting`, `Mail` | Five self-check boxes mirroring the printed checklist. Not legal data — optional, default unchecked. |
+
+**Approval — exactly one of three checkboxes** (order verified against the
+printed form, top to bottom):
+- `Incorporators approved` = "Shares were not issued and the board of
+  directors or incorporators have adopted the amendment."
+- `Board of directors approved` = "Shares were issued and the board of
+  directors have adopted the amendment without shareholder approval
+  (W.S. 17-16-1005)."
+- `Shareholders approved` = "Shares were issued and the board of directors
+  have adopted the amendment with shareholder approval (W.S. 17-16-1003)."
+
+The assistant must ask which situation applies (most name-change-only
+amendments without a share event will be the first option) and check
+exactly one box. This resolves former Open Question 3.
+
+**There is no SOS filing/registration ID field on this form either.**
+
+### 5.3 Composing the amendment text (both forms)
+
+Neither form has a bare "new name" box — the `amendment`/`Amendment` field
+expects the **full text of the amended article** as it will legally read,
+e.g. `Article 1. The name of the limited liability company is Acme Holdings
+LLC.` The assistant composes this from (entity type, article number, new
+legal name incl. designator) and always shows it verbatim on the review
+screen for the user to edit before download — this exact wording is what
+gets filed with the state.
 
 ## 6. Functional requirements
 
@@ -144,22 +180,21 @@ actual form fields during `plan.md`.)*
 
 ## 8. Open questions / risks (to resolve in plan.md)
 
-1. **Exact PDF field names**: `sos.wyo.gov` is unreachable from this
-   sandbox's network policy (fetch attempts returned 403). Need to vendor
-   the actual current PDFs (LLC amendment + Form P) into `assets/forms/`
-   — either fetched from a normal (non-sandboxed) environment/Vercel build,
-   or provided directly by the user — before `plan.md` can nail down the
-   pdf-lib field mapping.
-2. **Filing ID optional?**: Confirm with the real form whether the SOS
-   filing/registration number field is required or optional — affects
-   whether the assistant should insist on it.
-3. **Form P certification branching**: Confirm the exact wording/checkbox
-   structure Form P uses for "directors only" vs "directors + shareholders"
-   adoption, since the assistant needs to ask the right disambiguating
-   question.
+1. ~~Exact PDF field names~~ — **RESOLVED**: official PDFs vendored at
+   `assets/forms/llc-amendment.pdf` and `assets/forms/corp-amendment-form-p.pdf`;
+   fields extracted and documented in §5.
+2. ~~Filing ID optional?~~ — **RESOLVED**: neither form has a filing/
+   registration ID field at all; it's not part of the data model.
+3. ~~Form P certification branching~~ — **RESOLVED**: three-way checkbox
+   mapping confirmed against the printed form in §5.2.
 4. **Gemini free-tier rate limits in production**: confirm current
    requests-per-day/minute limits at implementation time (they change) and
    design a graceful "please try again in a moment" fallback.
+5. **pdf-lib compatibility smoke test**: both forms use standard `/Tx` text
+   fields and `/Btn` checkboxes with `/Off`+`/Yes` states, which `pdf-lib`
+   handles natively — but confirm with a real fill-and-save round trip as
+   the first implementation task, before building the rest of the flow on
+   top of it.
 
 ## 9. Acceptance criteria (definition of done for this feature)
 
