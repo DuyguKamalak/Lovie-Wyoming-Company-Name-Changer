@@ -1,6 +1,14 @@
 "use client";
 
-import { createContext, useContext, useEffect, useReducer, type Dispatch, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useReducer,
+  useState,
+  type Dispatch,
+  type ReactNode,
+} from "react";
 import type { EntityType } from "@/lib/types";
 import type { ChatMessage } from "@/lib/gemini";
 
@@ -55,19 +63,34 @@ const STORAGE_KEY = "wyoming-name-changer:intake";
 
 const IntakeStateContext = createContext<IntakeState | null>(null);
 const IntakeDispatchContext = createContext<Dispatch<IntakeAction> | null>(null);
+// True once the sessionStorage hydration attempt has finished (found data
+// or not). Consumers that seed initial state client-side (e.g. the chat
+// page's opening message) must wait for this — otherwise there's a race
+// between "hydrate finished, found nothing" and "seed initial content",
+// and whichever effect happens to run second wins unpredictably.
+const IntakeHydratedContext = createContext(false);
 
 export function IntakeProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    try {
-      dispatch({ type: "HYDRATE", state: JSON.parse(raw) as IntakeState });
-    } catch {
-      // Corrupted/unexpected storage contents — ignore and start fresh
-      // rather than crash the app.
+    if (raw) {
+      try {
+        dispatch({ type: "HYDRATE", state: JSON.parse(raw) as IntakeState });
+      } catch {
+        // Corrupted/unexpected storage contents — ignore and start fresh
+        // rather than crash the app.
+      }
     }
+    // Intentional: this is the "syncing with an external system" case the
+    // rule itself calls out as legitimate (reading sessionStorage once on
+    // mount, a system React doesn't know about). The one extra render is
+    // the point — consumers like the chat page need to distinguish "still
+    // checking storage" from "checked, found nothing" (see useIntakeHydrated).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -76,7 +99,9 @@ export function IntakeProvider({ children }: { children: ReactNode }) {
 
   return (
     <IntakeStateContext.Provider value={state}>
-      <IntakeDispatchContext.Provider value={dispatch}>{children}</IntakeDispatchContext.Provider>
+      <IntakeDispatchContext.Provider value={dispatch}>
+        <IntakeHydratedContext.Provider value={hydrated}>{children}</IntakeHydratedContext.Provider>
+      </IntakeDispatchContext.Provider>
     </IntakeStateContext.Provider>
   );
 }
@@ -91,6 +116,11 @@ export function useIntakeDispatch(): Dispatch<IntakeAction> {
   const ctx = useContext(IntakeDispatchContext);
   if (!ctx) throw new Error("useIntakeDispatch must be used within IntakeProvider");
   return ctx;
+}
+
+// See IntakeHydratedContext above for why this exists.
+export function useIntakeHydrated(): boolean {
+  return useContext(IntakeHydratedContext);
 }
 
 export function startOver(dispatch: Dispatch<IntakeAction>): void {
