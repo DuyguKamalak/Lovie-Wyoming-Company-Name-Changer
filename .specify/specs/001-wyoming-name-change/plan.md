@@ -79,18 +79,35 @@ self-check boxes (§5.1/§5.2 of spec.md) are **not** part of the typed data
 model — they're either left blank (irrelevant to a name change) or handled
 as a fixed default at fill time, never asked about in chat.
 
-## 3. Conversation & extraction design (`/api/chat`)
+## 3. The intake agent (`/api/chat`)
 
-- Google Gemini (`gemini-2.0-flash`, model name in an env var
-  `GEMINI_MODEL` so it can be bumped without a code change) called with
-  **structured output** (`responseSchema` / function-calling — whichever
-  the current SDK favors at implementation time) constrained to a partial
-  `LlcFields`/`CorpFields` shape, so each turn either:
+This is the agentic core of the product — Google Gemini (`gemini-2.0-flash`,
+model name in an env var `GEMINI_MODEL` so it can be bumped without a code
+change) doesn't just answer questions, it *decides* what to do next each
+turn via explicit **function calling / tool use** (not raw JSON-mode
+parsing — real tools the model chooses to invoke):
+
+- `record_field(name, value)` — the agent calls this once per field as it
+  extracts it from the conversation, so the server updates `knownFields`
+  incrementally and transparently (auditable: we always know which tool
+  call produced which value).
+- `flag_invalid_name(reason)` — the agent calls this instead of silently
+  guessing when the new name is missing a valid designator (FR-005), so
+  validation is part of the agent's own reasoning, not a separate
+  bolted-on check.
+- `mark_ready_for_review()` — the agent calls this once every required
+  field for the selected entity type is present and valid; this is what
+  flips `readyForReview: true` in the response and moves the user to the
+  review screen.
+
+Each turn: client sends `{ history, entityType, knownFields }` → the agent
+runs (possibly calling several tools in sequence before replying, e.g.
+`record_field` three times then a follow-up question) → response is
+`{ reply, knownFields, readyForReview }`. So each turn either:
   1. returns updated known fields + a follow-up question (fields still
      missing/ambiguous), or
-  2. returns updated known fields + `readyForReview: true` once every
-     required field for the selected entity type is present and the name
-     has a valid designator (FR-005).
+  2. returns updated known fields + `readyForReview: true` (all required
+     fields present and valid).
 - System prompt encodes: ask entity type first (FR-001), never give legal
   advice, ask one clear question at a time, validate the new name ends in
   an appropriate designator, and — importantly — once it has current name +

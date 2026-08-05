@@ -46,17 +46,19 @@ land; don't start a task whose dependencies aren't checked yet.
   `Content-Disposition: attachment; filename=...` response, no temp files
   written to disk (plan §5). Depends on T006.
 
-- [ ] **T008 — Gemini client wrapper**
+- [ ] **T008 — Gemini intake agent**
   `lib/gemini.ts`: thin wrapper + system prompt (entity type first, one
-  question at a time, never legal advice, validate designator, compose and
-  confirm `amendmentText` before `readyForReview`) per plan.md §3.
+  question at a time, never legal advice, compose and confirm
+  `amendmentText`) + the three function-calling tools (`record_field`,
+  `flag_invalid_name`, `mark_ready_for_review`) per plan.md §3.
   `GEMINI_API_KEY`/`GEMINI_MODEL` read server-side only. Depends on T003.
 
 - [ ] **T009 — `/api/chat` route**
-  Stateless route: request = `{ history, entityType, knownFields }` →
-  structured-output call to T008 → `{ reply, knownFields, readyForReview }`.
-  Surfaces Gemini rate-limit errors as a typed "try again in a moment"
-  error, no silent paid fallback (constitution §I). Depends on T008.
+  Stateless route: request = `{ history, entityType, knownFields }` → runs
+  T008's agent loop (may invoke several tools before replying) →
+  `{ reply, knownFields, readyForReview }`. Surfaces Gemini rate-limit
+  errors as a typed "try again in a moment" error, no silent paid fallback
+  (constitution §I). Depends on T008.
 
 - [ ] **T010 — Client state layer**
   `useReducer` context for `{ entityType, history, knownFields,
