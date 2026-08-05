@@ -18,6 +18,9 @@ dependency-free and hand-rolled for this project:
     spec.md                # WHAT & WHY — user stories, requirements, scope
     plan.md                # HOW — architecture, data model, API design
     tasks.md                # ordered, checkable implementation tasks
+    agent.md                # if the feature drives an LLM agent: its system
+                             # prompt, rules, and tool schemas — the source of
+                             # truth the code loads, not a code-only detail
 ```
 
 Rules for any new feature or significant change:

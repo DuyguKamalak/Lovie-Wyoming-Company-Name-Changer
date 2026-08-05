@@ -85,20 +85,13 @@ This is the agentic core of the product — Google Gemini (`gemini-2.0-flash`,
 model name in an env var `GEMINI_MODEL` so it can be bumped without a code
 change) doesn't just answer questions, it *decides* what to do next each
 turn via explicit **function calling / tool use** (not raw JSON-mode
-parsing — real tools the model chooses to invoke):
+parsing — real tools the model chooses to invoke).
 
-- `record_field(name, value)` — the agent calls this once per field as it
-  extracts it from the conversation, so the server updates `knownFields`
-  incrementally and transparently (auditable: we always know which tool
-  call produced which value).
-- `flag_invalid_name(reason)` — the agent calls this instead of silently
-  guessing when the new name is missing a valid designator (FR-005), so
-  validation is part of the agent's own reasoning, not a separate
-  bolted-on check.
-- `mark_ready_for_review()` — the agent calls this once every required
-  field for the selected entity type is present and valid; this is what
-  flips `readyForReview: true` in the response and moves the user to the
-  review screen.
+**The agent's full system prompt, its rules, and its three tool schemas
+(`record_field`, `flag_invalid_name`, `mark_ready_for_review`) are defined
+in [`agent.md`](./agent.md) — that file is the source of truth `lib/gemini.ts`
+loads/embeds, not something restated here.** Changing agent behavior means
+editing `agent.md` first (constitution VI), then the code.
 
 Each turn: client sends `{ history, entityType, knownFields }` → the agent
 runs (possibly calling several tools in sequence before replying, e.g.
@@ -107,7 +100,7 @@ runs (possibly calling several tools in sequence before replying, e.g.
   1. returns updated known fields + a follow-up question (fields still
      missing/ambiguous), or
   2. returns updated known fields + `readyForReview: true` (all required
-     fields present and valid).
+     fields present and valid, `mark_ready_for_review` was called).
 - System prompt encodes: ask entity type first (FR-001), never give legal
   advice, ask one clear question at a time, validate the new name ends in
   an appropriate designator, and — importantly — once it has current name +
