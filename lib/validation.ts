@@ -35,7 +35,7 @@ export function designatorWarning(entityType: EntityType, name: string): string 
     : `"${name}" doesn't end in a recognized corporate designator (Inc., Incorporated, Corporation, Corp., Co., Company, Limited, or Ltd.). Wyoming requires one — double-check before continuing.`;
 }
 
-const LLC_REQUIRED_KEYS: (keyof LlcFields)[] = [
+export const LLC_REQUIRED_KEYS: (keyof LlcFields)[] = [
   "currentName",
   "dateOfOriginalFiling",
   "articleNumber",
@@ -49,7 +49,7 @@ const LLC_REQUIRED_KEYS: (keyof LlcFields)[] = [
   "email",
 ];
 
-const CORP_REQUIRED_KEYS: (keyof CorpFields)[] = [
+export const CORP_REQUIRED_KEYS: (keyof CorpFields)[] = [
   "currentName",
   "articleNumber",
   "newName",

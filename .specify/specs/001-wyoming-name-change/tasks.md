@@ -48,10 +48,10 @@ land; don't start a task whose dependencies aren't checked yet.
 
 - [ ] **T008 — Gemini intake agent**
   `lib/gemini.ts`: implement exactly what `agent.md` specifies — the
-  system prompt verbatim, the three tool schemas (`record_field`,
-  `flag_invalid_name`, `mark_ready_for_review`) wired to real
-  function-calling (not JSON-mode parsing). `GEMINI_API_KEY`/`GEMINI_MODEL`
-  read server-side only. Depends on T003.
+  system prompt verbatim, the four tool schemas (`set_entity_type`,
+  `record_field`, `flag_invalid_name`, `mark_ready_for_review`) wired to
+  real function-calling (not JSON-mode parsing). `GEMINI_API_KEY`/
+  `GEMINI_MODEL` read server-side only. Depends on T003.
 
 - [ ] **T009 — `/api/chat` route**
   Stateless route: request = `{ history, entityType, knownFields }` → runs

@@ -53,14 +53,39 @@ current request (constitution §III/§V).
 
 ## Tools
 
+### `set_entity_type`
+```json
+{ "name": "set_entity_type",
+  "description": "Record which of the two supported entity types the user has, as soon as it's determined. Must be called before any record_field call.",
+  "parameters": {
+    "type": "object",
+    "properties": { "entityType": { "type": "string", "enum": ["llc", "corp"] } },
+    "required": ["entityType"]
+  }
+}
+```
+Discovered missing during implementation (T008) — `record_field` only covers
+`LlcFields`/`CorpFields` keys, which don't exist until the entity type
+itself is known, so a dedicated tool is needed for that first step.
+
 ### `record_field`
 ```json
 { "name": "record_field",
-  "description": "Record a single confirmed field value extracted from the conversation.",
+  "description": "Record a single confirmed field value extracted from the conversation. `field` must be exactly one of the listed enum values that applies to the active entity type — never invent a different key name.",
   "parameters": {
     "type": "object",
     "properties": {
-      "field": { "type": "string", "description": "One of the LlcFields/CorpFields keys for the active entity type (spec.md §2)." },
+      "field": {
+        "type": "string",
+        "enum": [
+          "currentName", "articleNumber", "newName", "amendmentText",
+          "signatureDate", "signerName", "signerTitle", "contactPerson",
+          "phone", "email",
+          "dateOfOriginalFiling",
+          "amendmentDate", "approval"
+        ],
+        "description": "LLC uses: currentName, dateOfOriginalFiling, articleNumber, newName, amendmentText, signatureDate, signerName, signerTitle, contactPerson, phone, email. Corp uses: currentName, articleNumber, newName, amendmentText, amendmentDate, approval, signatureDate, signerName, signerTitle, contactPerson, phone, email (approval is one of \"incorporators\"/\"board\"/\"shareholders\"). Exact match to lib/types.ts LlcFields/CorpFields keys required."
+      },
       "value": { "type": "string" }
     },
     "required": ["field", "value"]
@@ -68,7 +93,11 @@ current request (constitution §III/§V).
 }
 ```
 Called once per field as it's confirmed — never batch-guessed from a single
-ambiguous message without asking.
+ambiguous message without asking. **Found during T008 testing**: without an
+explicit enum, the model invented plausible-looking but wrong key names
+(e.g. `currentLegalName` instead of `currentName`), silently breaking the
+review screen and PDF fill. The enum above is authoritative — it must stay
+in sync with `lib/types.ts`.
 
 ### `flag_invalid_name`
 ```json
@@ -102,7 +131,8 @@ not a lawyer and must never give legal advice.
 Your only job: figure out, through natural conversation, which of two
 entity types the user has (LLC or C-Corporation), then collect exactly the
 fields required for that entity's official amendment form. Ask the entity
-type before anything else. Ask one clear question at a time. Use the
+type before anything else, and call set_entity_type as soon as you know it
+— every other tool depends on it. Ask one clear question at a time. Use the
 record_field tool every time you confirm a field value — don't just hold it
 in your head.
 
@@ -141,7 +171,7 @@ the intake.
 Agent: Hi! I'll help you prepare a Wyoming name-change amendment. First —
        is your company a Wyoming LLC or a Wyoming Corporation?
 User:  LLC
-Agent: [record_field entityType=llc] Got it. What's the LLC's current
+Agent: [set_entity_type entityType=llc] Got it. What's the LLC's current
        legal name, exactly as it's on file with the Secretary of State?
 User:  Acme Ventures LLC
 Agent: [record_field currentName="Acme Ventures LLC"] Thanks. And what
