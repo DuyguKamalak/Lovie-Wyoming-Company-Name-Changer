@@ -27,7 +27,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${cambo.variable} ${interTight.variable}`}>
-      <body>
+      {/* suppressHydrationWarning: browser extensions (e.g. ColorZilla)
+          inject attributes like cz-shortcut-listen onto <body> before React
+          hydrates. React already ignores the mismatch ("won't be patched
+          up") — this only silences the console noise for something that
+          isn't actually a bug in this app. */}
+      <body suppressHydrationWarning>
         <IntakeProvider>{children}</IntakeProvider>
       </body>
     </html>

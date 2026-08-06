@@ -52,6 +52,11 @@ phrase like "also the contact person" refers back to a name already
 given earlier in the same message and still needs its own
 record_field(contactPerson, ...) call, not just a mental note.
 
+signatureDate is pre-filled with today's real date before you ever see the
+conversation. If it already appears in Known fields, treat it as settled —
+don't ask about it or invent a different value. Only call record_field for
+it if the user explicitly states a different date themselves.
+
 When every required field — including amendmentText itself, via its own
 record_field call — is confirmed and the amendment text has been read
 back and accepted, call mark_ready_for_review. Do not call it before

@@ -30,3 +30,16 @@ export function normalizeDate(value: string): string {
   // it'll be visibly editable on the review screen either way.
   return trimmed;
 }
+
+// Deterministic mm/dd/yyyy for "today", in the server's local time. Used to
+// pre-fill signatureDate in code rather than letting the model guess it —
+// found via real user testing that the model will otherwise invent a
+// plausible-looking date (e.g. "01/15/2023") that nobody ever said, which is
+// exactly the kind of hallucination that shouldn't land on a legal document.
+// The review screen still lets the user override it (e.g. signing later).
+export function getTodayFormatted(): string {
+  const now = new Date();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${mm}/${dd}/${now.getFullYear()}`;
+}

@@ -1,7 +1,7 @@
 import { GoogleGenAI, type FunctionDeclaration, type Content } from "@google/genai";
 import type { EntityType } from "./types";
 import { SYSTEM_PROMPT } from "./agentPrompt";
-import { DATE_FIELD_KEYS, normalizeDate } from "./dateFormat";
+import { DATE_FIELD_KEYS, normalizeDate, getTodayFormatted } from "./dateFormat";
 import { missingFields, humanizeFieldKey } from "./validation";
 
 // Everything here implements .specify/specs/001-wyoming-name-change/agent.md
@@ -203,6 +203,12 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
 
   let entityType = params.entityType;
   const knownFields: Record<string, string> = { ...params.knownFields };
+  // Pre-fill signatureDate deterministically instead of leaving it for the
+  // model to guess — see getTodayFormatted's comment. Only fills the gap;
+  // never overwrites a value the user (or a prior turn) already gave.
+  if (!knownFields.signatureDate || knownFields.signatureDate.trim() === "") {
+    knownFields.signatureDate = getTodayFormatted();
+  }
   let readyForReview = false;
   let suggestedReplies: string[] | null = null;
 
@@ -275,6 +281,14 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
 // out in the conversation instead of after clicking Download. Extracted
 // as a pure function so this reconciliation logic is unit-testable without
 // a real API call.
+//
+// Asks about only the FIRST missing field, not the whole list at once:
+// dumping every missing field into one message ("signer name, contact
+// person, phone, email...") broke agent.md rule 3 (one question at a time)
+// and read as jarringly different from the rest of the conversation, which
+// the model had been asking one field per turn. If more than one field is
+// still missing, the next turn's reconciliation asks about the next one —
+// same as if the model itself had asked them one by one.
 export function reconcileReadyForReview(
   entityType: EntityType | null,
   knownFields: Record<string, string>,
@@ -288,11 +302,9 @@ export function reconcileReadyForReview(
   if (missing.length === 0) {
     return { readyForReview, reply };
   }
-  const list = missing.map(humanizeFieldKey).join(", ");
+  const next = humanizeFieldKey(missing[0]);
   return {
     readyForReview: false,
-    reply: `Almost done — I still need a bit more before this is ready to review: ${list}. Could you share ${
-      missing.length > 1 ? "those" : "that"
-    }?`,
+    reply: `Almost done — one more thing before this is ready to review: what's the ${next}?`,
   };
 }

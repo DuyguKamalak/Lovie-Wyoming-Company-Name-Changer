@@ -47,9 +47,31 @@ test("reconcileReadyForReview overrides readyForReview when fields are actually 
 
   assert.equal(result.readyForReview, false);
   assert.match(result.reply, /signer name/);
-  assert.match(result.reply, /contact person/);
-  assert.match(result.reply, /phone/);
-  assert.match(result.reply, /email/);
+});
+
+// Regression guard for a second real bug found alongside the one above:
+// once the model was caught skipping fields, the fallback asked about every
+// missing one in a single combined message ("signer name, contact person,
+// phone, email"), which broke the one-question-at-a-time pattern used
+// everywhere else in the conversation. Each call should surface only the
+// next missing field; later calls (once earlier ones are filled in) move on
+// to the next.
+test("reconcileReadyForReview asks about only the first missing field, one at a time", () => {
+  const incomplete = { ...COMPLETE_LLC_FIELDS };
+  delete (incomplete as Record<string, string | undefined>).signerName;
+  delete (incomplete as Record<string, string | undefined>).contactPerson;
+  delete (incomplete as Record<string, string | undefined>).phone;
+  delete (incomplete as Record<string, string | undefined>).email;
+
+  const first = reconcileReadyForReview("llc", incomplete, true, "All set!");
+  assert.match(first.reply, /signer name/);
+  assert.doesNotMatch(first.reply, /contact person/);
+  assert.doesNotMatch(first.reply, /phone/);
+  assert.doesNotMatch(first.reply, /email/);
+
+  const afterSignerName = { ...incomplete, signerName: "Jordan Smith" };
+  const second = reconcileReadyForReview("llc", afterSignerName, true, "All set!");
+  assert.match(second.reply, /contact person/);
 });
 
 test("reconcileReadyForReview leaves readyForReview true when everything is actually present", () => {
