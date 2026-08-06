@@ -21,6 +21,7 @@ import {
 import { composeAmendmentText } from "./composeAmendment";
 import { valueCameFromUser } from "./provenance";
 import { looksLikeAdviceRequest } from "./advice";
+import { formatFieldValue } from "./textFormat";
 import {
   DONE_REPLY,
   composeReply,
@@ -407,11 +408,18 @@ function executeTool(
         };
       }
 
+      // The user types the way people type ("president", "acme ventures
+      // inc", "3075550142") and it used to reach the state's form verbatim.
+      // Formatting happens here, after validation, so the chat, the composed
+      // amendment text, the review screen and the PDF all carry the same
+      // string — see lib/textFormat.ts for where the line is drawn between
+      // presentation and identity.
+      const formatted = formatFieldValue(field, value);
       // "changed", not just "ok": re-recording a value we already had means
       // the user's message taught us nothing, and the reply should say so
       // rather than silently repeating the question.
-      const changed = ctx.knownFields[field] !== value;
-      ctx.knownFields[field] = value;
+      const changed = ctx.knownFields[field] !== formatted;
+      ctx.knownFields[field] = formatted;
       return { ok: true, changed };
     }
     default:

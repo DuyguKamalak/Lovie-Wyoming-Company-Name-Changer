@@ -296,6 +296,35 @@ doesn't need a model to write it.
     is a legitimate reading, and rejecting it would cost the user a turn
     for nothing.
 
+17. **Present what the user typed properly on the form — but never change
+    what it says.** People type the way people type, and it used to reach a
+    state filing verbatim: `president` printed as `president`, `acme
+    ventures inc` as `acme ventures inc`, `3075550142` unformatted. Filling
+    the form neatly is the tool's job, not the user's. `lib/textFormat.ts`
+    reformats at `record_field` time — before the amendment text is composed
+    from those parts — so the chat, the review screen and the PDF all carry
+    the same string:
+    - **Company names**: each word capitalised, designators in their
+      conventional case (`llc` → `LLC`, `l.l.c.` → `L.L.C.`, `inc` → `Inc`),
+      minor words (`of`, `the`) left lowercase inside the name.
+    - **People and titles**: capitalised, including after hyphens and
+      apostrophes (`o'brien` → `O'Brien`), name particles left lowercase
+      (`van`, `von`), and acronym titles uppercased (`ceo` → `CEO`).
+    - **Email**: domain lowercased; the local part is left exactly as typed,
+      since only the domain is case-insensitive by spec.
+    - **Phone**: a plain 10-digit US number becomes `307-555-0142`; anything
+      with a country code or extension is left alone rather than mangled.
+    - **Article number**: the filler is dropped, so `"Article 1"` records as
+      `"1"`. **Found while writing this**: it validated fine and then printed
+      `"Article Article 1. The name of the corporation is …"` on the filing.
+    The line, and it is not negotiable: **casing is presentation,
+    punctuation is identity.** A word the user capitalised themselves is
+    never touched (`eBay`, `iRobot`, `McDonald`), and a designator's period
+    is never added or removed — `Inc` and `Inc.` are two different
+    registered names, and choosing between them is rule 7's territory, not
+    formatting. Values the user edits on the review screen are their
+    explicit choice and are never reformatted.
+
 ## Tools
 
 ### `set_entity_type`
