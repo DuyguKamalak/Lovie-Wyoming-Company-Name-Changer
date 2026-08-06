@@ -19,12 +19,19 @@ import { missingFields, humanizeFieldKey } from "./validation";
 // work (agent.md) lands.
 const DEFAULT_MODEL = "gemini-flash-lite-latest";
 
-function getClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+// Same model, a second free Google AI Studio key as a same-day quota
+// fallback — not the multi-provider fallback plan.md section 9 explicitly
+// deferred (different LLM providers, a bigger decision). GEMINI_API_KEY_FALLBACK
+// is optional; when unset, behavior is unchanged (single key, throws on 429
+// same as before).
+export function getApiKeys(): string[] {
+  const keys = [process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_FALLBACK].filter(
+    (key): key is string => typeof key === "string" && key.trim() !== ""
+  );
+  if (keys.length === 0) {
     throw new Error("GEMINI_API_KEY is not set");
   }
-  return new GoogleGenAI({ apiKey });
+  return keys;
 }
 
 const setEntityTypeDeclaration: FunctionDeclaration = {
@@ -221,7 +228,17 @@ const MAX_TOOL_ITERATIONS = 6;
 // history + knownFields every request; this function has no memory beyond
 // its own arguments and never persists anything server-side.
 export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunIntakeAgentResult> {
-  const ai = getClient();
+  const apiKeys = getApiKeys();
+  // Advances forward-only within a single request: once a key is exhausted
+  // (429) this turn, there's no reason to keep re-trying it on every
+  // remaining tool-call iteration of the same request — stick with
+  // whichever key last worked. A fresh HTTP request (the next chat turn)
+  // starts back at index 0 by design; this function is stateless (plan.md
+  // section 3/6) and has nowhere to remember "key 0 was dead" between
+  // requests, so the cost is at most one extra failed call per turn on a
+  // day the primary key is out of quota — acceptable for a free-tier app.
+  let keyIndex = 0;
+  let ai = new GoogleGenAI({ apiKey: apiKeys[keyIndex] });
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
 
   let entityType = params.entityType;
@@ -244,11 +261,29 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const systemInstruction = `${SYSTEM_PROMPT}\n\nCurrent state (do not re-ask what's already known here):\n${renderStateSummary(entityType, knownFields)}`;
 
-    const response = await ai.models.generateContent({
-      model,
-      contents,
-      config: { systemInstruction, tools: TOOLS },
-    });
+    let response: Awaited<ReturnType<typeof ai.models.generateContent>>;
+    for (;;) {
+      try {
+        response = await ai.models.generateContent({
+          model,
+          contents,
+          config: { systemInstruction, tools: TOOLS },
+        });
+        break;
+      } catch (error) {
+        const status = (error as { status?: number })?.status;
+        // Only a quota/rate-limit error justifies switching keys — any
+        // other failure (bad request, network, etc.) would fail identically
+        // on the fallback key too, so surface it immediately instead of
+        // masking it behind a pointless retry.
+        if (status === 429 && keyIndex < apiKeys.length - 1) {
+          keyIndex++;
+          ai = new GoogleGenAI({ apiKey: apiKeys[keyIndex] });
+          continue;
+        }
+        throw error;
+      }
+    }
 
     const calls = response.functionCalls ?? [];
     const text = response.text ?? "";

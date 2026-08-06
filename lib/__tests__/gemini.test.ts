@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RECORD_FIELD_KEYS, reconcileReadyForReview, isValidApprovalValue } from "../gemini";
+import { RECORD_FIELD_KEYS, reconcileReadyForReview, isValidApprovalValue, getApiKeys } from "../gemini";
 import { LLC_REQUIRED_KEYS, CORP_REQUIRED_KEYS } from "../validation";
 
 const COMPLETE_LLC_FIELDS: Record<string, string> = {
@@ -101,4 +101,45 @@ test("isValidApprovalValue accepts only the three canonical values", () => {
   assert.equal(isValidApprovalValue("yes"), false);
   assert.equal(isValidApprovalValue(""), false);
   assert.equal(isValidApprovalValue("Incorporators"), false);
+});
+
+// getApiKeys backs runIntakeAgent's same-day quota fallback: a second free
+// Google AI Studio key (GEMINI_API_KEY_FALLBACK) the app switches to on a
+// 429 from the primary. These tests guard the env-parsing edge cases —
+// unset/blank fallback shouldn't produce a bogus second entry, and a
+// missing primary key should still throw the same clear error as before
+// this feature existed.
+test("getApiKeys", async (t) => {
+  const ORIGINAL_KEY = process.env.GEMINI_API_KEY;
+  const ORIGINAL_FALLBACK = process.env.GEMINI_API_KEY_FALLBACK;
+  t.after(() => {
+    if (ORIGINAL_KEY === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = ORIGINAL_KEY;
+    if (ORIGINAL_FALLBACK === undefined) delete process.env.GEMINI_API_KEY_FALLBACK;
+    else process.env.GEMINI_API_KEY_FALLBACK = ORIGINAL_FALLBACK;
+  });
+
+  await t.test("returns just the primary key when no fallback is set", () => {
+    process.env.GEMINI_API_KEY = "primary-key";
+    delete process.env.GEMINI_API_KEY_FALLBACK;
+    assert.deepEqual(getApiKeys(), ["primary-key"]);
+  });
+
+  await t.test("returns both keys in order when a fallback is set", () => {
+    process.env.GEMINI_API_KEY = "primary-key";
+    process.env.GEMINI_API_KEY_FALLBACK = "fallback-key";
+    assert.deepEqual(getApiKeys(), ["primary-key", "fallback-key"]);
+  });
+
+  await t.test("ignores a blank fallback instead of returning an empty-string key", () => {
+    process.env.GEMINI_API_KEY = "primary-key";
+    process.env.GEMINI_API_KEY_FALLBACK = "   ";
+    assert.deepEqual(getApiKeys(), ["primary-key"]);
+  });
+
+  await t.test("throws when no key is configured at all", () => {
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEY_FALLBACK;
+    assert.throws(() => getApiKeys(), /GEMINI_API_KEY is not set/);
+  });
 });

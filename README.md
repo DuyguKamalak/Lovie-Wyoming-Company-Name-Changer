@@ -45,8 +45,11 @@ Open [http://localhost:3000](http://localhost:3000).
 ### Environment variables
 
 See `.env.example`. `GEMINI_API_KEY` is required — get a free key from
-[Google AI Studio](https://aistudio.google.com/apikey). `GEMINI_MODEL` is
-optional and defaults to `gemini-flash-lite-latest`.
+[Google AI Studio](https://aistudio.google.com/apikey). `GEMINI_API_KEY_FALLBACK`
+is an optional second free key the app switches to automatically if the
+first hits its daily quota (same model, same-day fallback — not a
+different provider). `GEMINI_MODEL` is optional and defaults to
+`gemini-flash-lite-latest`.
 
 ### Commands
 

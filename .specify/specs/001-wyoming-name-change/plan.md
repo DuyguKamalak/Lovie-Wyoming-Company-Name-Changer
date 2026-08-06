@@ -233,6 +233,16 @@ existing GitHub account, no new signup) as a 429-triggered fallback —
 NVIDIA NIM was also considered but requires a separate signup and doesn't
 publish a clear daily cap, so it's a worse first choice.
 
+**Follow-up decision**: added an optional second Google AI Studio key
+(`GEMINI_API_KEY_FALLBACK`, `lib/gemini.ts`) as a same-day quota fallback —
+`runIntakeAgent` retries a 429 with the fallback key, same model, before
+giving up. This is deliberately narrower than the multi-provider fallback
+deferred above (one extra env var + a retry loop, not a new
+provider/model integration), so it doesn't reopen that constitution IV
+tradeoff — it just doubles the effective daily quota (~1,000 RPD across
+two free keys) for near-zero added complexity. Multi-provider fallback
+remains deferred until 1,000/day is demonstrated insufficient.
+
 ## 10. Pre-launch risk: form staleness
 
 This sandbox cannot reach `sos.wyo.gov` (network policy), so the vendored
