@@ -19,6 +19,7 @@ import {
   looksLikeArticleNumber,
   looksLikeAmendmentText,
 } from "./validation";
+import { composeAmendmentText } from "./composeAmendment";
 
 // Everything here implements .specify/specs/001-wyoming-name-change/agent.md
 // exactly — that file is the source of truth for the four tools and the
@@ -133,6 +134,38 @@ export const APPROVAL_VALUES = ["incorporators", "board", "shareholders"] as con
 
 export function isValidApprovalValue(value: string): value is (typeof APPROVAL_VALUES)[number] {
   return (APPROVAL_VALUES as readonly string[]).includes(value);
+}
+
+// record_field's enum is necessarily the union of both entity types' keys
+// (one tool, two forms), so the schema alone can't stop the model from
+// recording a Corp-only field in an LLC conversation or vice versa — found
+// in testing that it does exactly that, leaving values in knownFields that
+// aren't on the form being prepared (agent.md rule 4) and, for `approval`,
+// a legal fact recorded in a flow that has no approval checkbox at all.
+// These two sets are the difference between LLC_REQUIRED_KEYS and
+// CORP_REQUIRED_KEYS; keep them in sync with lib/types.ts.
+const LLC_ONLY_KEYS = new Set<string>(["dateOfOriginalFiling"]);
+const CORP_ONLY_KEYS = new Set<string>(["amendmentDate", "approval"]);
+
+// Pure so the rules are unit-testable without a real API call. Returns null
+// when the field belongs to the active entity type, or the error string
+// handed back to the model as the tool result (it re-reads these and
+// corrects itself).
+export function entityScopeError(entityType: EntityType | null, field: string): string | null {
+  // set_entity_type's own description says it must come first; enforce it
+  // rather than recording fields we can't yet validate against a form —
+  // every other check below (and the company-name designator rules) needs
+  // to know which of the two forms is being filled.
+  if (!entityType) {
+    return "call set_entity_type first — which fields exist, and how they're validated, depends on the entity type";
+  }
+  if (entityType === "llc" && CORP_ONLY_KEYS.has(field)) {
+    return `${field} is not a field on the llc amendment form — don't ask about it or record it`;
+  }
+  if (entityType === "corp" && LLC_ONLY_KEYS.has(field)) {
+    return `${field} is not a field on the corp amendment form — don't ask about it or record it`;
+  }
+  return null;
 }
 
 const recordFieldDeclaration: FunctionDeclaration = {
@@ -262,6 +295,10 @@ function executeTool(
       const value = typeof args.value === "string" ? args.value : "";
       if (!RECORD_FIELD_KEYS.includes(field as (typeof RECORD_FIELD_KEYS)[number])) {
         return { ok: false, error: `unknown field: ${field}` };
+      }
+      const scopeError = entityScopeError(ctx.getEntityType(), field);
+      if (scopeError) {
+        return { ok: false, error: scopeError };
       }
 
       // Dates first: normalize before validating, since the raw input
@@ -537,26 +574,27 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     const calls = response.functionCalls ?? [];
     const text = response.text ?? "";
 
-    // Found via real user testing: suggest_replies is itself a function
-    // call, so a naive "calls.length === 0 means done" loop discards this
-    // turn's text (and defers to another round-trip) whenever suggest_replies
-    // is called alongside it — e.g. a turn that both calls
-    // set_entity_type/suggest_replies AND writes "What is the current
-    // legal name...?" As soon as another round-trip runs, that text is
-    // gone, but the chip options from THIS round were already captured
-    // into `suggestedReplies`, which the loop never reset — so an
-    // unrelated later turn's question ("what's the legal name?") shipped
-    // to the client paired with stale "Yes"/"No" chips meant for a
-    // completely different message. Only ever trust suggest_replies when
-    // it arrives in the same response as non-empty reply text.
-    let turnSuggestedReplies: string[] | null = null;
+    // suggest_replies is itself a function call, so a naive "calls.length
+    // === 0 means done" loop discarded this turn's text whenever the two
+    // arrived together, and the loop then paired a *later* round's question
+    // with the earlier round's chips ("what's the legal name?" + Yes/No).
+    // The fix for that was to break as soon as any text arrives — but
+    // scoping the chips to that same single round threw them away in the
+    // common case instead: the model very often calls record_field and
+    // suggest_replies in one tool-only round and writes its question in the
+    // *next* one (verified against the live API — the Corp approval
+    // question does exactly this), so `suggestedReplies` came back null on
+    // every single turn and the chips never reached the UI at all.
+    // Everything in this loop belongs to one user-facing reply, and we stop
+    // at the first text we see, so chips collected during this turn are
+    // always chips for that reply — just don't let them survive the turn.
     const results = calls.map((call) => {
       const name = call.name ?? "";
       if (name === "mark_ready_for_review") readyForReview = true;
       if (name === "suggest_replies") {
         const options = call.args?.options;
         if (Array.isArray(options)) {
-          turnSuggestedReplies = options.filter((o): o is string => typeof o === "string");
+          suggestedReplies = options.filter((o): o is string => typeof o === "string");
         }
       }
       return executeTool(name, call.args ?? {}, {
@@ -569,7 +607,6 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
 
     if (text) {
       reply = text;
-      suggestedReplies = turnSuggestedReplies;
       break;
     }
 
@@ -596,9 +633,44 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     contents.push({ role: "user", parts: responseParts });
   }
 
-  const reconciled = reconcileReadyForReview(entityType, knownFields, readyForReview, reply);
+  // Same deterministic-instead-of-hoping treatment signatureDate gets: the
+  // amendment text is fully determined by entity type + article number +
+  // new name, and agent.md rule 6's "compose it, then record_field it" step
+  // is the single most-skipped instruction in the prompt (it showed the text
+  // in chat and never recorded it, repeatedly). Compose it in code once its
+  // three inputs are known rather than re-prompting for it; the read-back
+  // guard in reconcileReadyForReview is what makes sure the user still sees
+  // and confirms it. looksLikeAmendmentText already rejects a *wrong* text
+  // at record time — this covers the text that was never recorded at all.
+  if (
+    entityType &&
+    (!knownFields.amendmentText || knownFields.amendmentText.trim() === "") &&
+    knownFields.articleNumber?.trim() &&
+    knownFields.newName?.trim()
+  ) {
+    knownFields.amendmentText = composeAmendmentText(
+      entityType,
+      knownFields.articleNumber.trim(),
+      knownFields.newName.trim()
+    );
+  }
 
-  return { ...reconciled, entityType, knownFields, suggestedReplies };
+  // The loop can run out of iterations on a pure tool-calling streak and
+  // leave `reply` empty — which the client renders as an empty assistant
+  // bubble (and, if mark_ready_for_review was among those calls, silently
+  // navigates away behind). Say something rather than nothing.
+  if (!reply) {
+    reply = "Sorry — I lost the thread there. Could you say that again?";
+  }
+
+  return {
+    ...reconcileReadyForReview(entityType, knownFields, readyForReview, reply, {
+      history: params.history,
+      suggestedReplies,
+    }),
+    entityType,
+    knownFields,
+  };
 }
 
 // Don't trust mark_ready_for_review at face value: found via direct
@@ -626,22 +698,89 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
 // thing..." ends up repeated four times back to back — reads as robotic,
 // and it isn't even true the first three times. The rest of the
 // conversation just asks its questions plainly; this should match.
+// A humanized key name is a fine stand-in question for a plain text field
+// ("What's the signer name?"), but it is nonsense for the Corp approval
+// choice: reproduced in testing that a Corp run reaching this path asked
+// "What's the approval?" — a bare key name in place of a three-way legal
+// question, with none of the three options offered and no chips. agent.md
+// rules 8/11 apply to this question wherever it gets asked from, including
+// here. Wording mirrors CORP_APPROVAL_OPTIONS on the review screen.
+const APPROVAL_QUESTION = `One legal detail decides which box gets checked on the form — which of these describes how the amendment was approved?
+
+1. Shares haven't been issued yet, and the incorporators or board adopted it.
+2. Shares were issued, and the board adopted it without a shareholder vote.
+3. Shares were issued, and the board adopted it with shareholder approval.`;
+
+const APPROVAL_CHIPS = [
+  "No shares issued yet",
+  "Board, no shareholder vote",
+  "Board with shareholder approval",
+];
+
+const READ_BACK_CHIPS = ["Yes, that's the text", "No, let me change it"];
+
+function normalizeForCompare(value: string): string {
+  // Markdown decoration only — the model reads the text back as
+  // "> **Article 1.** The name of..." and that is still a faithful
+  // read-back. Wording differences are NOT normalized away.
+  return value
+    .replace(/[*_>`#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+// Did the assistant actually show the user this exact amendment text at some
+// point? Only assistant turns count — the same string appearing in a user
+// message is the user typing it, not us reading it back for confirmation.
+export function wasReadBackToUser(amendmentText: string, history: ChatMessage[]): boolean {
+  const needle = normalizeForCompare(amendmentText);
+  if (!needle) return false;
+  return history.some(
+    (message) => message.role === "assistant" && normalizeForCompare(message.text).includes(needle)
+  );
+}
+
 export function reconcileReadyForReview(
   entityType: EntityType | null,
   knownFields: Record<string, string>,
   readyForReview: boolean,
-  reply: string
-): { readyForReview: boolean; reply: string } {
+  reply: string,
+  options?: { history?: ChatMessage[]; suggestedReplies?: string[] | null }
+): { readyForReview: boolean; reply: string; suggestedReplies: string[] | null } {
+  const suggestedReplies = options?.suggestedReplies ?? null;
   if (!readyForReview || !entityType) {
-    return { readyForReview, reply };
+    return { readyForReview, reply, suggestedReplies };
   }
   const missing = missingFields(entityType, knownFields);
-  if (missing.length === 0) {
-    return { readyForReview, reply };
+  if (missing.length > 0) {
+    // Whatever chips the model offered belonged to the reply we're about to
+    // throw away — shipping them with a different question is the same
+    // stale-chip bug the tool loop above documents.
+    if (missing[0] === "approval") {
+      return { readyForReview: false, reply: APPROVAL_QUESTION, suggestedReplies: APPROVAL_CHIPS };
+    }
+    return {
+      readyForReview: false,
+      reply: `What's the ${humanizeFieldKey(missing[0])}?`,
+      suggestedReplies: null,
+    };
   }
-  const next = humanizeFieldKey(missing[0]);
-  return {
-    readyForReview: false,
-    reply: `What's the ${next}?`,
-  };
+
+  // agent.md rule 6's other half, which no code enforced: the text has to be
+  // read back and confirmed, not just recorded. Reproduced in testing that
+  // a Corp run given one dense opening message recorded amendmentText,
+  // asked the approval question, and went ready-for-review without the user
+  // ever seeing the exact wording that gets mailed to the state. If it was
+  // never shown, show it now and hold the review screen for one more turn.
+  const history = options?.history;
+  if (history && !wasReadBackToUser(knownFields.amendmentText, history)) {
+    return {
+      readyForReview: false,
+      reply: `Before the review screen, here's the exact text that gets printed on the form:\n\n"${knownFields.amendmentText}"\n\nIs that word-for-word what you want to file?`,
+      suggestedReplies: READ_BACK_CHIPS,
+    };
+  }
+
+  return { readyForReview, reply, suggestedReplies };
 }

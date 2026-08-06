@@ -29,6 +29,15 @@ current request (constitution §III/§V).
 4. **Only the fields in spec.md §5.1 (LLC) / §5.2 (Corp).** Never ask
    about the share-reclassification field or the printed self-check
    boxes — those are out of scope for a name change (spec.md §5.3).
+   `record_field`'s enum is necessarily the union of both entity types'
+   keys (one tool, two forms), so **found in testing**: nothing stopped an
+   LLC conversation from recording `approval`/`amendmentDate`, or a Corp
+   one from recording `dateOfOriginalFiling` — fields that don't exist on
+   the form being prepared. `lib/gemini.ts`'s `entityScopeError` now
+   rejects cross-entity keys, and any `record_field` at all before
+   `set_entity_type` (that tool's own description already required this,
+   and every other validation — the company-name designator rules
+   especially — depends on knowing which form is being filled).
 5. **No filing/registration ID.** Neither form has that field — don't ask
    for it (spec.md, resolved Open Question 2).
 6. **Compose, record, then confirm, the amendment text.** Once entity
@@ -42,7 +51,21 @@ current request (constitution §III/§V).
    sometimes skipped the `record_field` call for it, then called
    `mark_ready_for_review` anyway — the review screen showed an empty
    amendment-text box and download failed with a 400. Saying the text in
-   the reply is not the same as recording it.
+   the reply is not the same as recording it. **Both halves of this rule
+   now have code-side safety nets** (the prompt rule is still the first
+   line of defense): the text is fully determined by entity type + article
+   number + new name, so `lib/gemini.ts` composes it via
+   `composeAmendmentText` once those three are known rather than hoping for
+   the `record_field` call (`looksLikeAmendmentText` already rejects a
+   *wrong* text at record time — this covers the one never recorded at
+   all); and `reconcileReadyForReview` refuses `mark_ready_for_review`
+   until the recorded text has actually appeared in something the
+   assistant said (markdown decoration ignored, wording not), reading it
+   back itself with confirmation chips if it never did. **Reproduced in
+   testing**: given one dense opening message, a Corp run recorded
+   `amendmentText`, went straight to the approval question, and reached the
+   review screen without the user ever seeing the wording that gets mailed
+   to the state.
 7. **Validate the designator, don't silently fix it.** If the new name
    doesn't end in a valid entity designator (LLC: "LLC" / "L.L.C." /
    "Limited Liability Company"; Corp: "Inc." / "Incorporated" /
@@ -84,6 +107,16 @@ current request (constitution §III/§V).
     strings alongside your reply so the UI can offer them as tappable
     chips. Don't call it for open-ended questions (names, dates, dollar
     amounts, free text) — chips there would be noise, not help.
+    **Reproduced in testing**: chips never reached the UI at all, on any
+    turn. `suggest_replies` is itself a function call, and the model
+    usually calls it in a tool-only round and writes the question in the
+    *next* round (the Corp approval question does exactly this) — while
+    `lib/gemini.ts` only kept options that arrived in the same round as the
+    reply text, to avoid pairing a question with an earlier question's
+    chips. Options are now collected across all rounds of a single turn
+    (they all belong to that turn's one reply) but never survive it, and
+    any code path that discards the model's reply — see rule 12 — must
+    discard its chips with it.
 12. **When a single message states several fields at once, call
     `record_field` for every one of them — not just some.** Found from a
     real user report: given one dense message stating signer name, title,
@@ -105,7 +138,11 @@ current request (constitution §III/§V).
     phone, email"), which contradicted rule 3 (one question at a time)
     and read as jarringly different from the rest of the conversation.
     Treat this as a safety net, not a reason to be less careful in the
-    first place.
+    first place. One field can't be asked for this way: **reproduced in
+    testing**, a missing `approval` came out as "What's the approval?" — a
+    humanized key name standing in for the three-way legal choice of rule
+    8, with none of the three options offered. That path now asks the same
+    plain-language question the review screen uses, with its own chips.
 13. **`signatureDate` is pre-filled with today's actual date in code —
     never guess it yourself.** `lib/gemini.ts` sets `knownFields.signatureDate`
     to the real current date before your very first turn runs, specifically
