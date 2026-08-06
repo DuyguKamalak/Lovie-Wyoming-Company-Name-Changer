@@ -8,6 +8,7 @@ import { BrandButton } from "../components/BrandButton";
 import { designatorWarning } from "@/lib/validation";
 import { CORP_APPROVAL_OPTIONS, fieldConfigFor } from "./fieldConfig";
 import { formatGenerateError } from "./formatGenerateError";
+import { amendmentTextMismatch } from "./amendmentSync";
 
 export default function ReviewPage() {
   const state = useIntakeState();
@@ -39,6 +40,9 @@ export default function ReviewPage() {
   const entityType = state.entityType;
   const fields = fieldConfigFor(entityType);
   const warning = designatorWarning(entityType, state.knownFields.newName ?? "");
+  // Only amendmentText is printed on the form, so a newName edit that isn't
+  // mirrored there mails the old name — see amendmentSync.ts.
+  const correctedAmendmentText = amendmentTextMismatch(entityType, state.knownFields);
 
   function setField(key: string, value: string) {
     dispatch({ type: "SET_FIELD", field: key, value });
@@ -126,6 +130,23 @@ export default function ReviewPage() {
             </fieldset>
           )}
         </div>
+
+        {correctedAmendmentText && (
+          <div className="flex flex-col items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <p>
+              The amendment text below doesn&apos;t match the new name and article number above —
+              and the amendment text is what actually gets printed on the form. It should read:
+            </p>
+            <p className="font-semibold">{correctedAmendmentText}</p>
+            <button
+              type="button"
+              className="rounded-full border border-amber-300 bg-white px-3 py-1.5 font-semibold transition-colors hover:bg-amber-100 active:scale-95"
+              onClick={() => setField("amendmentText", correctedAmendmentText)}
+            >
+              Use this text
+            </button>
+          </div>
+        )}
 
         {warning && (
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

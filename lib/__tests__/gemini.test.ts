@@ -7,6 +7,9 @@ import {
   getApiKeys,
   isTransientError,
   isKeyLevelFailure,
+  entityScopeError,
+  wasReadBackToUser,
+  type ChatMessage,
 } from "../gemini";
 import { LLC_REQUIRED_KEYS, CORP_REQUIRED_KEYS } from "../validation";
 
@@ -101,6 +104,140 @@ test("reconcileReadyForReview is a no-op when the model didn't claim ready anywa
 // isValidApprovalValue is the server-side backstop: record_field rejects
 // anything that isn't one of the three canonical values fillCorp.ts's
 // APPROVAL_CHECKBOX actually knows how to map to a checkbox.
+const COMPLETE_CORP_FIELDS: Record<string, string> = {
+  currentName: "Acme Ventures, Inc.",
+  articleNumber: "1",
+  newName: "Acme Holdings, Inc.",
+  amendmentText: "Article 1. The name of the corporation is Acme Holdings, Inc.",
+  amendmentDate: "07/01/2026",
+  approval: "shareholders",
+  signatureDate: "08/06/2026",
+  signerName: "Jordan Smith",
+  signerTitle: "President",
+  contactPerson: "Jordan Smith",
+  phone: "307-555-0100",
+  email: "jordan@example.com",
+};
+
+// Regression guard for a reproduced bug: humanizeFieldKey turned a missing
+// `approval` into the question "What's the approval?" — a bare key name
+// standing in for a three-way legal choice, with none of the three options
+// offered. Which checkbox gets checked is a real legal fact (agent.md rule
+// 8), so this one field needs its own phrasing and its own chips.
+test("reconcileReadyForReview asks the approval question in plain language, with chips", () => {
+  const incomplete = { ...COMPLETE_CORP_FIELDS };
+  delete (incomplete as Record<string, string | undefined>).approval;
+
+  const result = reconcileReadyForReview("corp", incomplete, true, "All set!");
+
+  assert.equal(result.readyForReview, false);
+  assert.doesNotMatch(result.reply, /What's the approval\?/);
+  assert.match(result.reply, /shares/i);
+  assert.equal(result.suggestedReplies?.length, 3);
+});
+
+// Regression guard for the stale-chip bug class documented in
+// runIntakeAgent's tool loop: when reconciliation throws away the model's
+// reply and asks its own question instead, the chips the model offered
+// belonged to the *discarded* text and must not ship with the new question.
+test("reconcileReadyForReview drops the model's chips when it overrides the reply", () => {
+  const incomplete = { ...COMPLETE_LLC_FIELDS };
+  delete (incomplete as Record<string, string | undefined>).signerName;
+
+  const result = reconcileReadyForReview("llc", incomplete, true, "All set!", {
+    suggestedReplies: ["Yes", "No"],
+  });
+
+  assert.match(result.reply, /signer name/);
+  assert.equal(result.suggestedReplies, null);
+});
+
+test("reconcileReadyForReview passes the model's chips through when it doesn't intervene", () => {
+  const result = reconcileReadyForReview("llc", COMPLETE_LLC_FIELDS, true, "All set!", {
+    suggestedReplies: ["Yes", "No"],
+  });
+
+  assert.equal(result.readyForReview, true);
+  assert.deepEqual(result.suggestedReplies, ["Yes", "No"]);
+});
+
+// Regression guard for a reproduced bug in the Corp flow: given one dense
+// opening message, the model composed and record_field'd amendmentText,
+// asked the approval question, and later called mark_ready_for_review —
+// without ever showing the user the exact text that gets mailed to the
+// state. agent.md rule 6 requires reading it back and getting confirmation;
+// looksLikeAmendmentText checks the *wording* at record time, but nothing
+// checked that the user ever saw it.
+test("reconcileReadyForReview withholds ready until the amendment text was read back", () => {
+  const history: ChatMessage[] = [
+    { role: "user", text: "I have a Wyoming Corporation, Acme Ventures, Inc." },
+    { role: "assistant", text: "How was this amendment approved?" },
+    { role: "user", text: "Shares were issued and the shareholders approved it" },
+  ];
+
+  const result = reconcileReadyForReview("corp", COMPLETE_CORP_FIELDS, true, "All set!", { history });
+
+  assert.equal(result.readyForReview, false);
+  assert.match(result.reply, /Article 1\. The name of the corporation is Acme Holdings, Inc\./);
+  assert.equal(result.suggestedReplies?.length, 2);
+});
+
+test("reconcileReadyForReview honors ready once the text has been read back", () => {
+  const history: ChatMessage[] = [
+    {
+      role: "assistant",
+      text: "Here it is:\n\n> **Article 1.** The name of the corporation is Acme Holdings, Inc.\n\nLook right?",
+    },
+    { role: "user", text: "yes" },
+  ];
+
+  const result = reconcileReadyForReview("corp", COMPLETE_CORP_FIELDS, true, "All set!", { history });
+
+  assert.equal(result.readyForReview, true);
+  assert.equal(result.reply, "All set!");
+});
+
+test("wasReadBackToUser ignores markdown decoration and whitespace, not wording", () => {
+  const text = "Article 1. The name of the corporation is Acme Holdings, Inc.";
+  assert.equal(
+    wasReadBackToUser(text, [
+      { role: "assistant", text: "> **Article 1.**  The name of the\ncorporation is Acme Holdings, Inc." },
+    ]),
+    true
+  );
+  // Said by the user, not read back by the assistant — doesn't count.
+  assert.equal(wasReadBackToUser(text, [{ role: "user", text }]), false);
+  assert.equal(
+    wasReadBackToUser(text, [
+      { role: "assistant", text: "Article 1. The name of the corporation is Acme Ventures, Inc." },
+    ]),
+    false
+  );
+});
+
+// Regression guard: record_field's enum is a flat list of every key across
+// both entity types, so nothing stopped the model from recording `approval`
+// or `amendmentDate` in an LLC conversation (or `dateOfOriginalFiling` in a
+// Corp one) — values that then sit in knownFields unused, or get asked about
+// in a flow where they aren't part of the form (agent.md rule 4). Also
+// guards set_entity_type's documented precondition: record_field must not be
+// accepted before the entity type is known, since every other validation
+// (company-name designators especially) depends on it.
+test("entityScopeError rejects fields that don't belong to the active entity type", () => {
+  assert.equal(entityScopeError("llc", "currentName"), null);
+  assert.equal(entityScopeError("llc", "dateOfOriginalFiling"), null);
+  assert.equal(entityScopeError("corp", "amendmentDate"), null);
+  assert.equal(entityScopeError("corp", "approval"), null);
+
+  assert.match(String(entityScopeError("llc", "approval")), /llc/i);
+  assert.match(String(entityScopeError("llc", "amendmentDate")), /llc/i);
+  assert.match(String(entityScopeError("corp", "dateOfOriginalFiling")), /corp/i);
+});
+
+test("entityScopeError rejects any record_field before set_entity_type", () => {
+  assert.match(String(entityScopeError(null, "currentName")), /set_entity_type/);
+});
+
 test("isValidApprovalValue accepts only the three canonical values", () => {
   assert.equal(isValidApprovalValue("incorporators"), true);
   assert.equal(isValidApprovalValue("board"), true);
