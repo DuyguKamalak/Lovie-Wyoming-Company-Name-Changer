@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RECORD_FIELD_KEYS, reconcileReadyForReview } from "../gemini";
+import { RECORD_FIELD_KEYS, reconcileReadyForReview, isValidApprovalValue } from "../gemini";
 import { LLC_REQUIRED_KEYS, CORP_REQUIRED_KEYS } from "../validation";
 
 const COMPLETE_LLC_FIELDS: Record<string, string> = {
@@ -84,4 +84,21 @@ test("reconcileReadyForReview is a no-op when the model didn't claim ready anywa
   const result = reconcileReadyForReview("llc", {}, false, "What's the current name?");
   assert.equal(result.readyForReview, false);
   assert.equal(result.reply, "What's the current name?");
+});
+
+// Regression guard for a real user-reported bug: the model asked the
+// amendment-text confirmation and the Corp approval question in one
+// combined message, the user replied with a bare "yes" (which only
+// answers the text confirmation), and the model recorded an approval
+// value anyway — risking the wrong checkbox on the actual mailed form.
+// isValidApprovalValue is the server-side backstop: record_field rejects
+// anything that isn't one of the three canonical values fillCorp.ts's
+// APPROVAL_CHECKBOX actually knows how to map to a checkbox.
+test("isValidApprovalValue accepts only the three canonical values", () => {
+  assert.equal(isValidApprovalValue("incorporators"), true);
+  assert.equal(isValidApprovalValue("board"), true);
+  assert.equal(isValidApprovalValue("shareholders"), true);
+  assert.equal(isValidApprovalValue("yes"), false);
+  assert.equal(isValidApprovalValue(""), false);
+  assert.equal(isValidApprovalValue("Incorporators"), false);
 });

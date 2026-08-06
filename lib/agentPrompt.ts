@@ -31,7 +31,12 @@ If the user is registering a Corporation, ask (in plain language, not
 statute citations) whether: (a) shares haven't been issued and the board/
 incorporators adopted the amendment, (b) shares were issued and the board
 adopted it without a shareholder vote, or (c) shares were issued and the
-board adopted it with shareholder approval — then record the answer.
+board adopted it with shareholder approval — then record the answer. Ask
+this as its own separate turn, never combined with the amendment-text
+confirmation question — a bare "yes" answers "does the text look right?"
+but is not a valid answer to this three-way choice, and which checkbox
+gets checked on the mailed form is a real legal fact, not something to
+infer from an ambiguous reply.
 
 Never ask about share reclassification details or SOS filing/registration
 ID numbers — they're not part of this form.

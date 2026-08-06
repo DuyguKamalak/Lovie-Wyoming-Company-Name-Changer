@@ -56,6 +56,16 @@ export const RECORD_FIELD_KEYS = [
   "approval",
 ] as const;
 
+// Must match lib/types.ts's CorpApproval union and fillCorp.ts's
+// APPROVAL_CHECKBOX keys exactly. Exported (rather than kept private next
+// to executeTool) so the validation below is unit-testable without a real
+// API call.
+export const APPROVAL_VALUES = ["incorporators", "board", "shareholders"] as const;
+
+export function isValidApprovalValue(value: string): value is (typeof APPROVAL_VALUES)[number] {
+  return (APPROVAL_VALUES as readonly string[]).includes(value);
+}
+
 const recordFieldDeclaration: FunctionDeclaration = {
   name: "record_field",
   description:
@@ -176,6 +186,19 @@ function executeTool(
       if (!RECORD_FIELD_KEYS.includes(field as (typeof RECORD_FIELD_KEYS)[number])) {
         return { ok: false, error: `unknown field: ${field}` };
       }
+      // Which checkbox gets checked on the actual mailed form is a real
+      // legal fact, not free text — found via a real user report that the
+      // model recorded an approval value from a bare "yes" that had
+      // actually answered a different (amendment-text confirmation)
+      // question. Reject anything but the three canonical values instead
+      // of writing something fillCorpAmendment can't even map to a
+      // checkbox (APPROVAL_CHECKBOX[value] would be undefined).
+      if (field === "approval" && !isValidApprovalValue(value)) {
+        return {
+          ok: false,
+          error: `approval must be exactly one of: ${APPROVAL_VALUES.join(", ")} — ask the user which of the three situations applies, don't guess from a "yes"`,
+        };
+      }
       // agent.md rule 10: dates must be mm/dd/yyyy on the actual form —
       // normalize here rather than trust prompt instructions alone.
       ctx.knownFields[field] = DATE_FIELD_KEYS.has(field) ? normalizeDate(value) : value;
@@ -228,12 +251,45 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     });
 
     const calls = response.functionCalls ?? [];
-    if (calls.length === 0) {
-      reply = response.text ?? "";
+    const text = response.text ?? "";
+
+    // Found via real user testing: suggest_replies is itself a function
+    // call, so a naive "calls.length === 0 means done" loop discards this
+    // turn's text (and defers to another round-trip) whenever suggest_replies
+    // is called alongside it — e.g. a turn that both calls
+    // set_entity_type/suggest_replies AND writes "What is the current
+    // legal name...?" As soon as another round-trip runs, that text is
+    // gone, but the chip options from THIS round were already captured
+    // into `suggestedReplies`, which the loop never reset — so an
+    // unrelated later turn's question ("what's the legal name?") shipped
+    // to the client paired with stale "Yes"/"No" chips meant for a
+    // completely different message. Only ever trust suggest_replies when
+    // it arrives in the same response as non-empty reply text.
+    let turnSuggestedReplies: string[] | null = null;
+    const results = calls.map((call) => {
+      const name = call.name ?? "";
+      if (name === "mark_ready_for_review") readyForReview = true;
+      if (name === "suggest_replies") {
+        const options = call.args?.options;
+        if (Array.isArray(options)) {
+          turnSuggestedReplies = options.filter((o): o is string => typeof o === "string");
+        }
+      }
+      return executeTool(name, call.args ?? {}, {
+        knownFields,
+        setEntityType: (e) => (entityType = e),
+      });
+    });
+
+    if (text) {
+      reply = text;
+      suggestedReplies = turnSuggestedReplies;
       break;
     }
 
-    // Push the model's own response content back verbatim (not a
+    // No user-facing text yet this turn — a pure tool-calling round that
+    // needs its results fed back before the model can compose its actual
+    // reply. Push the model's own response content back verbatim (not a
     // hand-built { functionCall: {name, args} } object) — newer models
     // attach a thoughtSignature to each function-call part that must be
     // echoed back unmodified on the next turn, or the API rejects the
@@ -248,21 +304,9 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
       });
     }
 
-    const responseParts = calls.map((call) => {
-      const name = call.name ?? "";
-      if (name === "mark_ready_for_review") readyForReview = true;
-      if (name === "suggest_replies") {
-        const options = call.args?.options;
-        if (Array.isArray(options)) {
-          suggestedReplies = options.filter((o): o is string => typeof o === "string");
-        }
-      }
-      const result = executeTool(name, call.args ?? {}, {
-        knownFields,
-        setEntityType: (e) => (entityType = e),
-      });
-      return { functionResponse: { name, response: result } };
-    });
+    const responseParts = calls.map((call, idx) => ({
+      functionResponse: { name: call.name ?? "", response: results[idx] },
+    }));
     contents.push({ role: "user", parts: responseParts });
   }
 
@@ -289,6 +333,13 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
 // the model had been asking one field per turn. If more than one field is
 // still missing, the next turn's reconciliation asks about the next one —
 // same as if the model itself had asked them one by one.
+//
+// Plain "What's the X?" phrasing, no "Almost done" preamble: found via real
+// user testing that when several fields are missing in a row, this
+// reconciliation fires on every single turn, so "Almost done — one more
+// thing..." ends up repeated four times back to back — reads as robotic,
+// and it isn't even true the first three times. The rest of the
+// conversation just asks its questions plainly; this should match.
 export function reconcileReadyForReview(
   entityType: EntityType | null,
   knownFields: Record<string, string>,
@@ -305,6 +356,6 @@ export function reconcileReadyForReview(
   const next = humanizeFieldKey(missing[0]);
   return {
     readyForReview: false,
-    reply: `Almost done — one more thing before this is ready to review: what's the ${next}?`,
+    reply: `What's the ${next}?`,
   };
 }
