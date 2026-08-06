@@ -117,36 +117,69 @@ test("isValidApprovalValue accepts only the three canonical values", () => {
 // missing primary key should still throw the same clear error as before
 // this feature existed.
 test("getApiKeys", async (t) => {
-  const ORIGINAL_KEY = process.env.GEMINI_API_KEY;
-  const ORIGINAL_FALLBACK = process.env.GEMINI_API_KEY_FALLBACK;
+  const ORIGINAL = {
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+    GEMINI_API_KEY_FALLBACK: process.env.GEMINI_API_KEY_FALLBACK,
+    GEMINI_API_KEYS: process.env.GEMINI_API_KEYS,
+  };
+  const reset = () => {
+    for (const name of Object.keys(ORIGINAL)) delete process.env[name];
+  };
   t.after(() => {
-    if (ORIGINAL_KEY === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = ORIGINAL_KEY;
-    if (ORIGINAL_FALLBACK === undefined) delete process.env.GEMINI_API_KEY_FALLBACK;
-    else process.env.GEMINI_API_KEY_FALLBACK = ORIGINAL_FALLBACK;
+    for (const [name, value] of Object.entries(ORIGINAL)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   });
 
-  await t.test("returns just the primary key when no fallback is set", () => {
+  await t.test("returns just the primary key when nothing else is set", () => {
+    reset();
     process.env.GEMINI_API_KEY = "primary-key";
-    delete process.env.GEMINI_API_KEY_FALLBACK;
     assert.deepEqual(getApiKeys(), ["primary-key"]);
   });
 
   await t.test("returns both keys in order when a fallback is set", () => {
+    reset();
     process.env.GEMINI_API_KEY = "primary-key";
     process.env.GEMINI_API_KEY_FALLBACK = "fallback-key";
     assert.deepEqual(getApiKeys(), ["primary-key", "fallback-key"]);
   });
 
   await t.test("ignores a blank fallback instead of returning an empty-string key", () => {
+    reset();
     process.env.GEMINI_API_KEY = "primary-key";
     process.env.GEMINI_API_KEY_FALLBACK = "   ";
     assert.deepEqual(getApiKeys(), ["primary-key"]);
   });
 
+  // Free-tier capacity is per key and capped per *minute*, so the only
+  // real lever for more headroom is more keys — hence an open-ended list
+  // rather than a fixed primary/fallback pair.
+  await t.test("accepts an arbitrary number of keys via GEMINI_API_KEYS", () => {
+    reset();
+    process.env.GEMINI_API_KEYS = "key-a,key-b,key-c";
+    assert.deepEqual(getApiKeys(), ["key-a", "key-b", "key-c"]);
+  });
+
+  await t.test("merges all sources and trims surrounding whitespace", () => {
+    reset();
+    process.env.GEMINI_API_KEY = "primary-key";
+    process.env.GEMINI_API_KEY_FALLBACK = "fallback-key";
+    process.env.GEMINI_API_KEYS = " extra-1 , extra-2 ,, ";
+    assert.deepEqual(getApiKeys(), ["primary-key", "fallback-key", "extra-1", "extra-2"]);
+  });
+
+  // A duplicate would otherwise burn a failover attempt on a key already
+  // known to be failing this request.
+  await t.test("de-duplicates a key listed in more than one source", () => {
+    reset();
+    process.env.GEMINI_API_KEY = "same-key";
+    process.env.GEMINI_API_KEYS = "same-key,other-key";
+    assert.deepEqual(getApiKeys(), ["same-key", "other-key"]);
+  });
+
   await t.test("throws when no key is configured at all", () => {
-    delete process.env.GEMINI_API_KEY;
-    delete process.env.GEMINI_API_KEY_FALLBACK;
+    reset();
     assert.throws(() => getApiKeys(), /GEMINI_API_KEY is not set/);
   });
 });

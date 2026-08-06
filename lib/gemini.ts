@@ -27,15 +27,32 @@ import {
 // work (agent.md) lands.
 const DEFAULT_MODEL = "gemini-flash-lite-latest";
 
-// Same model, a second free Google AI Studio key as a same-day quota
-// fallback — not the multi-provider fallback plan.md section 9 explicitly
-// deferred (different LLM providers, a bigger decision). GEMINI_API_KEY_FALLBACK
-// is optional; when unset, behavior is unchanged (single key, throws on 429
-// same as before).
+// Capacity on the free tier is per-key and the binding limit is
+// requests-per-minute, so the only real lever is more keys — measured, not
+// assumed: swapping to a model with a higher headline RPM (Gemma 4 31B,
+// 30 RPM vs Flash Lite's 15) is actually *worse*, because its 16K
+// token-per-minute cap divided by this app's ~2K-token requests works out
+// to ~8 effective calls/min against Flash Lite's 15. See plan.md §9.1.
+//
+// So: accept any number of keys. GEMINI_API_KEYS takes a comma-separated
+// list; GEMINI_API_KEY and GEMINI_API_KEY_FALLBACK remain supported (and
+// are what the deployment currently sets). All sources are merged in
+// order, blanks dropped, duplicates removed — a key listed twice would
+// otherwise waste a failover attempt on a key already known to be failing.
 export function getApiKeys(): string[] {
-  const keys = [process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_FALLBACK].filter(
-    (key): key is string => typeof key === "string" && key.trim() !== ""
-  );
+  const raw = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_FALLBACK,
+    ...(process.env.GEMINI_API_KEYS ?? "").split(","),
+  ];
+  const keys = [
+    ...new Set(
+      raw
+        .filter((key): key is string => typeof key === "string")
+        .map((key) => key.trim())
+        .filter((key) => key !== "")
+    ),
+  ];
   if (keys.length === 0) {
     throw new Error("GEMINI_API_KEY is not set");
   }

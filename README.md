@@ -47,11 +47,17 @@ Open [http://localhost:3000](http://localhost:3000).
 ### Environment variables
 
 See `.env.example`. `GEMINI_API_KEY` is required — get a free key from
-[Google AI Studio](https://aistudio.google.com/apikey). `GEMINI_API_KEY_FALLBACK`
-is an optional second free key the app switches to automatically if the
-first hits its daily quota (same model, same-day fallback — not a
-different provider). `GEMINI_MODEL` is optional and defaults to
-`gemini-flash-lite-latest`.
+[Google AI Studio](https://aistudio.google.com/apikey).
+
+`GEMINI_API_KEYS` (comma-separated) and `GEMINI_API_KEY_FALLBACK` are
+optional extra keys. The app automatically tries the next key when one is
+rate-limited, restricted, or rejected. Free-tier capacity is **per key and
+capped per minute** (15 RPM), so extra keys — from different Google
+accounts — are the only real way to raise the ceiling; see
+`.specify/specs/001-wyoming-name-change/plan.md` §9.1 for the measurements
+behind that.
+
+`GEMINI_MODEL` is optional and defaults to `gemini-flash-lite-latest`.
 
 ### Commands
 

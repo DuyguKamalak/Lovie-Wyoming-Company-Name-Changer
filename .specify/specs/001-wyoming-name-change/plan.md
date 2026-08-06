@@ -296,6 +296,35 @@ actually valid and unrestricted — a broken one is worse than none, since
 it burns a failover attempt. The code tolerates it either way now, but
 capacity only doubles with a genuinely working second key.
 
+### 9.2 Raising the ceiling: measured, not assumed
+
+Once RPM was identified as the binding limit, the obvious question was
+whether a different free model has more headroom. Measured against the
+live API with this app's real payload (full system prompt + tool schemas +
+mid-conversation history) rather than trusting the headline numbers:
+
+| Model | Headline limits | Tokens/request | **Effective calls/min** |
+|---|---|---|---|
+| `gemini-flash-lite-latest` (current) | 15 RPM, 250K TPM, 500 RPD | 1,235 | **15** (RPM-bound) |
+| `gemma-4-31b-it` | 30 RPM, 16K TPM, 14.4K RPD | 1,999 | **8** (TPM-bound) |
+
+Gemma advertises double the RPM and does support function calling (tested:
+it correctly called `set_entity_type`), but its token-per-minute cap is 15×
+smaller, and this app's requests are ~2K tokens — so it delivers roughly
+*half* the usable throughput. Switching models is not the lever.
+
+**Decision**: stay on `gemini-flash-lite-latest`, and make key count the
+scaling knob instead — `getApiKeys` now accepts an open-ended
+comma-separated `GEMINI_API_KEYS` list alongside the original
+`GEMINI_API_KEY`/`GEMINI_API_KEY_FALLBACK` pair, de-duplicated. Each
+additional key from a different Google account adds another 15 RPM and 500
+RPD, with no code change and no second provider integration (which
+constitution IV still rules out as premature).
+
+For reference, measured end to end: a complete LLC intake is ~11 turns at
+~1-2 API calls per turn, so one key sustains roughly 30 full conversations
+per day and one conversation at a time comfortably.
+
 ## 10. Pre-launch risk: form staleness
 
 This sandbox cannot reach `sos.wyo.gov` (network policy), so the vendored
