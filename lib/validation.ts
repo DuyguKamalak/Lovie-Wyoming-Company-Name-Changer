@@ -112,28 +112,102 @@ export function isValidPhone(value: string): boolean {
   return digitCount >= 7;
 }
 
-// Applies to every free-text "name-shaped" field: currentName, newName,
-// signerName, signerTitle, contactPerson. Deliberately loose — this isn't
-// trying to judge whether something is a *plausible* name (that's not a
-// call this app should make), only to catch the class of clearly-wrong
-// input a fat-fingered or off-topic answer produces: empty, pure digits,
-// pure punctuation, or a wall of text someone pasted into the wrong box.
+// Free-text "person-shaped" fields: signerName, signerTitle,
+// contactPerson. The first version only required "contains a letter",
+// which a real user immediately walked straight through by answering a
+// bare "s" to every question — it passed, and the junk reached the review
+// screen. These values get printed on a state filing, so require at least
+// two letters and reject a single character repeated ("aa", "..."), while
+// still accepting genuinely short real answers like "Al" or "CEO".
 export function looksLikeAName(value: string): boolean {
   const trimmed = value.trim();
-  if (trimmed.length === 0 || trimmed.length > 200) return false;
-  if (!/[a-zA-Z]/.test(trimmed)) return false; // must contain at least one letter
+  if (trimmed.length < 2 || trimmed.length > 200) return false;
+  const letters = trimmed.match(/[a-zA-Z]/g) ?? [];
+  if (letters.length < 2) return false;
+  // "aaaa", "----", "SSS" — one character repeated is never a real answer.
+  if (new Set(trimmed.replace(/\s/g, "").toLowerCase()).size < 2) return false;
   return true;
 }
 
+// Company names (currentName, newName) get a stricter rule than person
+// names: Wyoming requires a registered entity's legal name to carry a
+// designator, and the form itself says the name "must match exactly to the
+// Secretary of State's records" — so a company name without one is wrong
+// by definition, not merely suspicious. This is what stops a bare "s" (or
+// "Acme" with the designator forgotten) being recorded as a legal entity
+// name. hasValidDesignator subsumes the junk checks: no garbage string
+// carries a valid designator.
+export function looksLikeCompanyName(entityType: EntityType, value: string): boolean {
+  if (!looksLikeAName(value) || !hasValidDesignator(entityType, value)) return false;
+  // The designator alone isn't enough: found live that "s LLC" passed
+  // every check, because the junk was in the *name* and the designator was
+  // real (the opening "I have a Wyoming LLC" even made it look
+  // user-supplied). Strip the designator and require what's left — the
+  // actual company name — to stand on its own.
+  return looksLikeAName(stripDesignator(entityType, value));
+}
+
+// Removes the trailing designator words so the distinctive part of the
+// name can be validated separately. "Acme Ventures LLC" -> "Acme Ventures".
+function stripDesignator(entityType: EntityType, name: string): string {
+  const designators = entityType === "llc" ? LLC_DESIGNATORS : CORP_DESIGNATORS;
+  const normalized = name.trim().replace(/[.,;:!?]+$/, "");
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const matched = designators.find((d) => endsWithDesignator(name, d));
+  if (!matched) return normalized;
+  return words.slice(0, words.length - matched.split(/\s+/).length).join(" ");
+}
+
+// agent.md rule 7: the agent must never append an entity designator the
+// user didn't actually give. Found in live testing that it does exactly
+// that under pressure — asked for the company name, a user typed a bare
+// "purple" and the model recorded "Purple Corp", fabricating the
+// designator and thereby passing looksLikeCompanyName.
+//
+// The checkable version of that rule: whichever designator the recorded
+// name ends in must also appear somewhere in the user's own words.
+// Case-insensitive and punctuation-tolerant, so any way the user actually
+// wrote it ("llc", "L.L.C.", "Inc.") still counts.
+export function designatorAppearsInUserText(
+  entityType: EntityType,
+  name: string,
+  userText: string
+): boolean {
+  const designators = entityType === "llc" ? LLC_DESIGNATORS : CORP_DESIGNATORS;
+  const matched = designators.find((d) => endsWithDesignator(name, d));
+  if (!matched) return false; // no designator at all — the other check reports this
+  // Compare on letters only, so "L.L.C." in the name matches "llc" typed
+  // by the user and vice versa.
+  const lettersOnly = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+  const haystack = lettersOnly(userText);
+  return haystack.includes(lettersOnly(matched));
+}
+
+// Recognized ways a Wyoming article gets numbered, so "purple" and "s" are
+// rejected while every legitimate style still passes.
+const ORDINAL_WORDS =
+  /^(first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|one|two|three|four|five|six|seven|eight|nine|ten)$/i;
+const ROMAN_NUMERAL = /^[ivxlcdm]+$/i;
+
 // articleNumber is always short on the real forms — "1", "Article 1",
-// "First", "3(b)", "III" — never a sentence. Word-count/length caps catch
-// an off-topic or rambling answer without trying to enumerate every
-// legitimate numbering style Wyoming articles might use.
+// "First", "3(b)", "III" — never a sentence and never a random word. The
+// original check only capped length and word count, so a bare "s" sailed
+// through. Now the value has to actually *designate* something: contain a
+// digit, or be a recognized ordinal word or roman numeral.
 export function looksLikeArticleNumber(value: string): boolean {
   const trimmed = value.trim();
   if (trimmed.length === 0 || trimmed.length > 40) return false;
-  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
-  return wordCount <= 6;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length > 6) return false;
+  if (/\d/.test(trimmed)) return true;
+  // No digits — every remaining word must be filler ("article", "the") or
+  // an ordinal/roman numeral, and at least one must be the numeral itself.
+  const meaningful = words.filter((w) => !/^(article|articles|the|no\.?|number|#)$/i.test(w));
+  if (meaningful.length === 0) return false;
+  return meaningful.every((w) => {
+    const bare = w.replace(/[.,;:()]/g, "");
+    return ORDINAL_WORDS.test(bare) || ROMAN_NUMERAL.test(bare);
+  });
 }
 
 // amendmentText is composed by the agent itself from the fixed template in

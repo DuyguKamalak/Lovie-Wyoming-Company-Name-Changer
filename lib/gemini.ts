@@ -1,13 +1,21 @@
 import { GoogleGenAI, type FunctionDeclaration, type Content } from "@google/genai";
 import type { EntityType } from "./types";
 import { SYSTEM_PROMPT } from "./agentPrompt";
-import { DATE_FIELD_KEYS, normalizeDate, getTodayFormatted, isValidDate } from "./dateFormat";
+import {
+  DATE_FIELD_KEYS,
+  normalizeDate,
+  getTodayFormatted,
+  isValidDate,
+  isNotFutureDate,
+} from "./dateFormat";
 import {
   missingFields,
   humanizeFieldKey,
   isValidEmail,
   isValidPhone,
   looksLikeAName,
+  looksLikeCompanyName,
+  designatorAppearsInUserText,
   looksLikeArticleNumber,
   looksLikeAmendmentText,
 } from "./validation";
@@ -225,6 +233,14 @@ function renderStateSummary(entityType: EntityType | null, knownFields: Record<s
 interface ToolContext {
   knownFields: Record<string, string>;
   setEntityType: (entityType: EntityType) => void;
+  // Company-name validation needs to know which designator set applies
+  // (LLC vs corporate), and entityType is established before any field is
+  // recorded (agent.md rule 1).
+  getEntityType: () => EntityType | null;
+  // Everything the user actually typed this conversation, lowercased —
+  // used to verify the model isn't inventing a designator the user never
+  // said (agent.md rule 7). See the currentName/newName check.
+  userText: string;
 }
 
 function executeTool(
@@ -259,6 +275,16 @@ function executeTool(
           return {
             ok: false,
             error: `"${value}" isn't a valid calendar date — ask the user for the real date in mm/dd/yyyy format.`,
+          };
+        }
+        // dateOfOriginalFiling and amendmentDate both describe something
+        // that already happened, so a future date is always a mistake —
+        // typically a mistyped year. signatureDate is exempt: the user may
+        // legitimately post-date the signature.
+        if (field !== "signatureDate" && !isNotFutureDate(normalized)) {
+          return {
+            ok: false,
+            error: `"${normalized}" is in the future, but ${humanizeFieldKey(field)} describes something that already happened — check the year with the user and ask again.`,
           };
         }
         ctx.knownFields[field] = normalized;
@@ -298,18 +324,59 @@ function executeTool(
           error: `"${value}" doesn't look like a valid phone number — ask the user for a real daytime phone number.`,
         };
       }
-      // Free-text "name-shaped" fields — catches empty/pure-digit/pure-
-      // punctuation answers (e.g. an off-topic reply the model mistakenly
-      // recorded anyway). Deliberately doesn't judge whether it's a
-      // *plausible* name, just that it isn't obviously garbage. newName's
-      // designator (LLC/Inc./etc.) is checked separately, later, as a
-      // warn-not-block step (FR-005) — this isn't that check.
+      // Company names get the strictest rule, because Wyoming requires a
+      // registered entity's legal name to carry a designator and the form
+      // says it "must match exactly to the Secretary of State's records".
+      // Found from real testing: a user answered a bare "s" to every
+      // question and it was recorded as the company's legal name, because
+      // the old check only asked for "contains a letter".
+      if (field === "currentName" || field === "newName") {
+        // entityType is known by the time any field is recorded (agent.md
+        // rule 1), but fall back to the looser check rather than crash if
+        // the model somehow records a name first.
+        const entityType = ctx.getEntityType();
+        const valid = entityType
+          ? looksLikeCompanyName(entityType, value)
+          : looksLikeAName(value);
+        if (!valid) {
+          return {
+            ok: false,
+            error: `"${value}" isn't a usable ${humanizeFieldKey(field)} — it must be the full legal name including the entity designator (${
+              entityType === "corp"
+                ? 'e.g. "Acme Holdings Inc."'
+                : 'e.g. "Acme Holdings LLC"'
+            }). Ask the user again.`,
+          };
+        }
+        // agent.md rule 7 forbids appending a designator the user didn't
+        // give — enforce it here rather than trusting the prompt. Found in
+        // live testing: asked for the company name the user typed a bare
+        // "purple", and the model recorded "Purple Corp", inventing the
+        // designator (and so sailing past the designator check above).
+        // Requiring the designator to appear in the user's own words is
+        // what catches that, while still accepting any casing or phrasing
+        // they actually used.
+        if (entityType && !designatorAppearsInUserText(entityType, value, ctx.userText)) {
+          return {
+            ok: false,
+            error: `The user never said an entity designator, so "${value}" would be inventing one. Ask them to confirm the full legal name including the designator instead of assuming it.`,
+          };
+        }
+        // The entire point of this filing is a *change* of name. If the new
+        // name matches the current one, something was misheard — filing it
+        // would cost the user $60 for a form that changes nothing.
+        const other = field === "newName" ? ctx.knownFields.currentName : ctx.knownFields.newName;
+        if (other && other.trim().toLowerCase() === value.trim().toLowerCase()) {
+          return {
+            ok: false,
+            error: `The new name and the current name are both "${value}" — this form only makes sense for an actual name change. Confirm with the user which one is wrong.`,
+          };
+        }
+      }
+      // Person-shaped fields — rejects the same bare-"s" class of answer
+      // while still accepting genuinely short real values ("Al", "CEO").
       if (
-        (field === "currentName" ||
-          field === "newName" ||
-          field === "signerName" ||
-          field === "signerTitle" ||
-          field === "contactPerson") &&
+        (field === "signerName" || field === "signerTitle" || field === "contactPerson") &&
         !looksLikeAName(value)
       ) {
         return {
@@ -448,6 +515,15 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     parts: [{ text: m.text }],
   }));
 
+  // Only what the user themselves typed — used to verify the agent isn't
+  // recording a company designator the user never actually said (agent.md
+  // rule 7). Deliberately excludes assistant turns, or the agent's own
+  // suggested wording would count as the user having said it.
+  const userText = params.history
+    .filter((m) => m.role === "user")
+    .map((m) => m.text)
+    .join("\n");
+
   let reply = "";
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const systemInstruction = `${SYSTEM_PROMPT}\n\nCurrent state (do not re-ask what's already known here):\n${renderStateSummary(entityType, knownFields)}`;
@@ -486,6 +562,8 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
       return executeTool(name, call.args ?? {}, {
         knownFields,
         setEntityType: (e) => (entityType = e),
+        getEntityType: () => entityType,
+        userText,
       });
     });
 

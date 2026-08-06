@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeDate, getTodayFormatted, isValidDate } from "../dateFormat";
+import { normalizeDate, getTodayFormatted, isValidDate, isNotFutureDate } from "../dateFormat";
 
 // Regression test for the exact bug found in T014 manual QA: the agent
 // recorded "2026-08-01" instead of "08/01/2026" for a Corp amendment
@@ -48,4 +48,16 @@ test("isValidDate", () => {
   assert.equal(isValidDate("02/29/2026"), false); // 2026 isn't a leap year
   assert.equal(isValidDate("not a date"), false);
   assert.equal(isValidDate(""), false);
+});
+
+// dateOfOriginalFiling and amendmentDate both describe something that
+// already happened, so a future date is always a mistake — typically a
+// mistyped year, which isValidDate alone would happily pass through onto a
+// state filing. signatureDate is exempt (a user may post-date a signature).
+test("isNotFutureDate", () => {
+  assert.equal(isNotFutureDate("01/15/2020"), true);
+  assert.equal(isNotFutureDate(getTodayFormatted()), true); // today counts as not-future
+  const nextYear = new Date().getFullYear() + 1;
+  assert.equal(isNotFutureDate(`01/15/${nextYear}`), false);
+  assert.equal(isNotFutureDate("not a date"), false);
 });

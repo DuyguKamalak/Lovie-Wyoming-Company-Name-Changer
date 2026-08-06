@@ -46,6 +46,22 @@ export function isValidDate(value: string): boolean {
   return date.getFullYear() === yyyy && date.getMonth() === mm - 1 && date.getDate() === dd;
 }
 
+// Both user-supplied dates on these forms describe something that has
+// already happened — when the articles were originally filed, and when the
+// amendment was adopted. A future date is therefore always wrong, and it's
+// the kind of typo (wrong year) that would otherwise sail through
+// isValidDate and land on a state filing. signatureDate is exempt: it's
+// the date the form gets signed, which a user may legitimately post-date.
+export function isNotFutureDate(value: string): boolean {
+  const match = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!match) return false;
+  const [, mm, dd, yyyy] = match.map(Number);
+  const date = new Date(yyyy, mm - 1, dd);
+  const today = new Date();
+  today.setHours(23, 59, 59, 999); // any time today still counts as "not future"
+  return date.getTime() <= today.getTime();
+}
+
 // Deterministic mm/dd/yyyy for "today", in the server's local time. Used to
 // pre-fill signatureDate in code rather than letting the model guess it —
 // found via real user testing that the model will otherwise invent a
