@@ -1,5 +1,7 @@
 # Lovie — Wyoming Company Name Changer
 
+**Live:** [lovie-wyoming-company-name-changer.vercel.app](https://lovie-wyoming-company-name-changer.vercel.app)
+
 An AI-assisted landing page that chats with a Wyoming LLC/Corporation owner,
 collects the information required to change their entity's legal name, and
 produces a download-ready, pre-filled copy of the **official Wyoming
@@ -63,10 +65,15 @@ different provider). `GEMINI_MODEL` is optional and defaults to
 
 ## Deployment
 
-Deployed on [Vercel](https://vercel.com) (free tier, serverless functions).
-Import this repository in the Vercel dashboard and set `GEMINI_API_KEY` (and
-optionally `GEMINI_MODEL`) as a project environment variable — no other
-configuration is needed.
+Deployed on [Vercel](https://vercel.com) (free tier, serverless functions),
+tracking the `main` branch — every push to `main` auto-deploys to
+production. Environment variables (`GEMINI_API_KEY`, optionally
+`GEMINI_API_KEY_FALLBACK` and `GEMINI_MODEL`) are set in the Vercel
+project settings, not committed anywhere.
+
+To deploy your own copy: import this repository in the Vercel dashboard
+and set those same environment variables — no other configuration is
+needed.
 
 ## Project structure & development process
 
