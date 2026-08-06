@@ -108,13 +108,13 @@ function formatTitle(value: string): string {
     .join(" ");
 }
 
+// Verbatim apart from surrounding whitespace. Lowercasing the domain would
+// be safe by spec (DNS is case-insensitive), but it produced a half-changed
+// address — "Jane.Doe@acme.com" from "Jane.Doe@ACME.COM" — and an email is
+// the user's own identifier on a filing the state answers to. Repo owner's
+// call: take it as given.
 function formatEmail(value: string): string {
-  const trimmed = value.trim();
-  const at = trimmed.lastIndexOf("@");
-  if (at === -1) return trimmed;
-  // Only the domain is case-insensitive by spec; leave the local part exactly
-  // as the user gave it rather than gamble on a case-sensitive mailbox.
-  return `${trimmed.slice(0, at)}@${trimmed.slice(at + 1).toLowerCase()}`;
+  return value.trim();
 }
 
 function formatPhone(value: string): string {

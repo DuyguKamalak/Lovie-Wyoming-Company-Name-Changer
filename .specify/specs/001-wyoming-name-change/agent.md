@@ -310,8 +310,11 @@ doesn't need a model to write it.
     - **People and titles**: capitalised, including after hyphens and
       apostrophes (`o'brien` → `O'Brien`), name particles left lowercase
       (`van`, `von`), and acronym titles uppercased (`ceo` → `CEO`).
-    - **Email**: domain lowercased; the local part is left exactly as typed,
-      since only the domain is case-insensitive by spec.
+    - **Email**: taken exactly as typed, apart from surrounding whitespace.
+      Lowercasing the domain would be safe by spec, but it left a
+      half-changed address on the form ("Jane.Doe@acme.com" from
+      "Jane.Doe@ACME.COM"), and the address is the user's own identifier on a
+      filing the state writes to.
     - **Phone**: a plain 10-digit US number becomes `307-555-0142`; anything
       with a country code or extension is left alone rather than mangled.
     - **Article number**: the filler is dropped, so `"Article 1"` records as
