@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lovie — Wyoming Company Name Changer
 
-## Getting Started
+An AI-assisted landing page that chats with a Wyoming LLC/Corporation owner,
+collects the information required to change their entity's legal name, and
+produces a download-ready, pre-filled copy of the **official Wyoming
+Secretary of State** amendment form.
 
-First, run the development server:
+The Secretary of State only accepts this filing by mail or in person — this
+tool prepares the paperwork, it does not file anything on your behalf, and
+it is not legal advice.
+
+## How it works
+
+1. Chat with Lovie about your Wyoming LLC or Corporation and the new name
+   you want.
+2. Review every extracted field before anything is generated.
+3. Download a pre-filled copy of the real SOS amendment form, ready to
+   print, sign, and mail (with the $60 filing fee).
+
+Nothing is stored server-side: each request is self-contained, the browser
+holds the conversation state, and the server never persists PII beyond the
+lifetime of a single request.
+
+## Tech stack
+
+- **Next.js** (App Router, TypeScript) — API routes run server-side so
+  secrets never reach the browser.
+- **Tailwind CSS v4** + `framer-motion` for styling/animation.
+- **Google Gemini** (`gemini-flash-lite-latest`) for the conversational
+  intake agent, via function calling / structured extraction.
+- **pdf-lib** to fill the real AcroForm fields of the vendored official
+  Wyoming SOS forms (`assets/forms/`).
+- No database, no user accounts — all free-tier.
+
+## Getting started
 
 ```bash
+npm install
+cp .env.example .env.local   # then fill in GEMINI_API_KEY
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+See `.env.example`. `GEMINI_API_KEY` is required — get a free key from
+[Google AI Studio](https://aistudio.google.com/apikey). `GEMINI_MODEL` is
+optional and defaults to `gemini-flash-lite-latest`.
 
-## Learn More
+### Commands
 
-To learn more about Next.js, take a look at the following resources:
+- `npm run dev` — local dev server
+- `npm run build` — production build (must pass before any push)
+- `npm run lint` — lint
+- `npm test` — unit tests (`node --test`, colocated in `__tests__/` next to
+  the code they cover)
+- `npm run smoke:pdf` — quick manual check that the vendored PDFs still
+  fill correctly
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deployment
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Deployed on [Vercel](https://vercel.com) (free tier, serverless functions).
+Import this repository in the Vercel dashboard and set `GEMINI_API_KEY` (and
+optionally `GEMINI_MODEL`) as a project environment variable — no other
+configuration is needed.
 
-## Deploy on Vercel
+## Project structure & development process
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This repo follows a spec-driven workflow — see `CLAUDE.md` for the full
+methodology and `.specify/specs/001-wyoming-name-change/` for the actual
+spec, technical plan, task breakdown, and the intake agent's system prompt
+(the source of truth for `lib/gemini.ts`'s behavior). Changes to the
+agent's behavior or the form fields it collects should update those docs
+first.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+app/            Routes (App Router), each with colocated __tests__/
+lib/            Business logic: Gemini agent, PDF filling, validation
+assets/forms/   Vendored official Wyoming SOS PDF forms
+.specify/       spec.md / plan.md / tasks.md / agent.md
+```
