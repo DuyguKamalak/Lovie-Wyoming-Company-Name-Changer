@@ -46,6 +46,12 @@ enumerable), call suggest_replies with 2-4 short option strings alongside
 your reply. Skip it for open-ended questions like names, dates, or free
 text — chips there would just be noise.
 
+When a single message states several fields at once, call record_field
+for every one of them, not just some — go through it point by point. A
+phrase like "also the contact person" refers back to a name already
+given earlier in the same message and still needs its own
+record_field(contactPerson, ...) call, not just a mental note.
+
 When every required field — including amendmentText itself, via its own
 record_field call — is confirmed and the amendment text has been read
 back and accepted, call mark_ready_for_review. Do not call it before

@@ -2,6 +2,7 @@ import { GoogleGenAI, type FunctionDeclaration, type Content } from "@google/gen
 import type { EntityType } from "./types";
 import { SYSTEM_PROMPT } from "./agentPrompt";
 import { DATE_FIELD_KEYS, normalizeDate } from "./dateFormat";
+import { missingFields, humanizeFieldKey } from "./validation";
 
 // Everything here implements .specify/specs/001-wyoming-name-change/agent.md
 // exactly — that file is the source of truth for the four tools and the
@@ -259,5 +260,39 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     contents.push({ role: "user", parts: responseParts });
   }
 
-  return { reply, entityType, knownFields, readyForReview, suggestedReplies };
+  const reconciled = reconcileReadyForReview(entityType, knownFields, readyForReview, reply);
+
+  return { ...reconciled, entityType, knownFields, suggestedReplies };
+}
+
+// Don't trust mark_ready_for_review at face value: found via direct
+// testing that the model can call it (and even say the right thing in its
+// reply) while having silently skipped record_field for one or more
+// mentioned fields in a dense, multi-fact message — signerName,
+// contactPerson, phone, and email all went unset in one real run despite
+// being spelled out in the user's message. /api/generate-pdf already has
+// its own missingFields check, but catching it here means the user finds
+// out in the conversation instead of after clicking Download. Extracted
+// as a pure function so this reconciliation logic is unit-testable without
+// a real API call.
+export function reconcileReadyForReview(
+  entityType: EntityType | null,
+  knownFields: Record<string, string>,
+  readyForReview: boolean,
+  reply: string
+): { readyForReview: boolean; reply: string } {
+  if (!readyForReview || !entityType) {
+    return { readyForReview, reply };
+  }
+  const missing = missingFields(entityType, knownFields);
+  if (missing.length === 0) {
+    return { readyForReview, reply };
+  }
+  const list = missing.map(humanizeFieldKey).join(", ");
+  return {
+    readyForReview: false,
+    reply: `Almost done — I still need a bit more before this is ready to review: ${list}. Could you share ${
+      missing.length > 1 ? "those" : "that"
+    }?`,
+  };
 }

@@ -24,7 +24,7 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "fields is required." }, { status: 400 });
   }
 
-  const missing = missingFields(entityType, fields);
+  const missing = missingFields(entityType, fields as unknown as Record<string, string>);
   if (missing.length > 0) {
     return Response.json({ error: "Missing required fields.", missing }, { status: 400 });
   }

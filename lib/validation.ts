@@ -1,5 +1,9 @@
 import type { EntityType, LlcFields, CorpFields } from "./types";
 
+export function humanizeFieldKey(key: string): string {
+  return key.replace(/([A-Z])/g, " $1").toLowerCase();
+}
+
 // spec.md FR-005: warn, don't silently block, if the new name is missing a
 // designator. Matching is case-insensitive and anchors to the end of the
 // name (designators are suffixes).
@@ -64,15 +68,17 @@ export const CORP_REQUIRED_KEYS: (keyof CorpFields)[] = [
   "email",
 ];
 
-// Server-side backstop (the /api/generate-pdf boundary) behind the review
-// screen's own validation — never silently fill a PDF with blank fields.
-export function missingFields(
-  entityType: EntityType,
-  fields: Partial<LlcFields> | Partial<CorpFields>
-): string[] {
+// Server-side backstop (the /api/generate-pdf boundary, and lib/gemini.ts's
+// own readyForReview check) behind the review screen's own validation —
+// never silently treat an incomplete field set as done. Takes a plain
+// Record rather than Partial<LlcFields|CorpFields> so it works equally for
+// a validated fields object (generate-pdf) and the agent's freeform
+// knownFields accumulator (gemini.ts) — both are structurally the same
+// shape (string keys -> string values) at the point this runs.
+export function missingFields(entityType: EntityType, fields: Record<string, string>): string[] {
   const keys = entityType === "llc" ? LLC_REQUIRED_KEYS : CORP_REQUIRED_KEYS;
   return keys.filter((key) => {
-    const value = (fields as Record<string, unknown>)[key];
+    const value = fields[key];
     return typeof value !== "string" || value.trim() === "";
   });
 }
