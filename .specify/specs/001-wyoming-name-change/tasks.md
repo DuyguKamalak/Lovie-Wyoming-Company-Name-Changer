@@ -93,12 +93,13 @@ land; don't start a task whose dependencies aren't checked yet.
   types now verified: chat → review → download → actual PDF bytes
   inspected and correct.
 
-- [ ] **T015 — Pre-launch form-currency check**
+- [x] **T015 — Pre-launch form-currency check**
   Manually open the live URLs
   (`sos.wyo.gov/forms/business/llc/llc-amendment.pdf`,
   `sos.wyo.gov/Forms/Business/PROF/P-Amendment.pdf`) in a normal browser
   and diff against `assets/forms/*.pdf`; re-vendor if the state has
   published a newer revision (plan §9).
+  Confirmed current by the repo owner directly against the live site.
 
 - [x] **T016 — Security review**
   Run the `security-review` skill over the full diff before calling this
