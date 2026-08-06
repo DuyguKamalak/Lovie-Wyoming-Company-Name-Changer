@@ -53,7 +53,19 @@ Consequences, by design:
   ahead — the plan constrains what is *asked*, not what is *accepted*.
 - Chips for enumerable steps (entity type, the Corp approval question, the
   read-back confirmation) come from the plan, not from the model
-  remembering to call `suggest_replies` — see rule 11.
+  remembering to call `suggest_replies` — see rule 11. They are derived from
+  the state the turn *ends* in, not the step it opened with: **reported from
+  the live app**, the model recorded `approval` and asked the next question
+  ("what is your title?") in the same round, and chips taken from the
+  opening step put the three approval options under a title question.
+- Each field step carries an `example` the model is told to show in its
+  question ("for example, 03/14/2019"), and is told never to record it.
+  **Found the same day the examples landed**: asked for a title, a user
+  typed a name, and the model recorded `"President"` — straight out of our
+  own illustration. `isEchoedExample` rejects a value that matches an
+  example token and appears nowhere in what the user typed, which is the
+  provenance check (rule 16) extended to the name/title fields that its
+  mechanical comparisons deliberately skip.
 - `mark_ready_for_review` is rejected as a tool error while any step
   remains, and the turn's text is discarded with it, so the model composes
   its next question with the corrected state instead of announcing a

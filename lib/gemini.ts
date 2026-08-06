@@ -19,8 +19,8 @@ import {
   looksLikeAmendmentText,
 } from "./validation";
 import { composeAmendmentText } from "./composeAmendment";
-import { valueCameFromUser } from "./provenance";
-import { nextStep, renderDirective, type Step } from "./fieldPlan";
+import { isEchoedExample, valueCameFromUser } from "./provenance";
+import { chipsForState, exampleFor, nextStep, renderDirective } from "./fieldPlan";
 
 // Everything here implements .specify/specs/001-wyoming-name-change/agent.md
 // exactly — that file is the source of truth for the four tools and the
@@ -305,6 +305,14 @@ function executeTool(
       // typed. Every check below asks "is this well-formed?" — and an
       // invented value is perfectly well-formed, which is what let an
       // unasked-for email and a self-quoted example date reach the form.
+      if (isEchoedExample(exampleFor(ctx.getEntityType(), field), value, ctx.userText)) {
+        return {
+          ok: false,
+          error: `"${value}" is the example from your own question, not something the user said — ask them again for their real ${humanizeFieldKey(
+            field
+          )}`,
+        };
+      }
       if (!valueCameFromUser(field, value, ctx.userText)) {
         return {
           ok: false,
@@ -575,16 +583,11 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     .join("\n");
 
   let reply = "";
-  // The step the reply being shipped was composed for — its chips are the
-  // ones that belong with that reply. Recomputed every round, because a
-  // record_field this round can advance the step mid-turn.
-  let stepAtReply: Step | null = null;
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     // Compose before choosing the step: the read-back step only exists once
     // there's a text to read back (agent.md rule 6).
     composeAmendmentTextIfReady(entityType, knownFields);
     const step = nextStep(entityType, knownFields, params.history);
-    stepAtReply = step;
     let markReadyRejected = false;
     const systemInstruction = `${SYSTEM_PROMPT}\n\nCurrent state (do not re-ask what's already known here):\n${renderStateSummary(
       entityType,
@@ -694,7 +697,14 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
   // the field plan precisely so they don't depend on the model remembering
   // to call suggest_replies. Its chips are still used for the ad-hoc
   // enumerable question the plan doesn't know about.
-  const chips = stepAtReply?.kind === "field" ? stepAtReply.chips : stepAtReply?.chips;
+  //
+  // Computed from the *final* state, not from the step this round opened
+  // with. Reported from the live app: the model recorded `approval` and
+  // asked the next question ("what's your title?") in the same round, and
+  // the round-opening step was still `approval` — so a title question
+  // shipped under the three approval chips. Whatever the model asked, the
+  // step it was asked to be on now is the one whose chips belong with it.
+  const chips = chipsForState(entityType, knownFields, params.history);
 
   return {
     ...reconcileReadyForReview(entityType, knownFields, readyForReview, reply, {

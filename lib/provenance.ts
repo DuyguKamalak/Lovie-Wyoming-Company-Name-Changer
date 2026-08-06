@@ -84,3 +84,30 @@ export function valueCameFromUser(field: string, value: string, userText: string
   }
   return true;
 }
+
+// The examples the CURRENT STEP block asks the model to show ("for example,
+// President, Manager, Managing Member") are an illustration, never an
+// answer — but found immediately in live use that the model will record one
+// as the value when the user's reply doesn't fit the question: asked for a
+// title, the user typed a name, and "President" was recorded, a title
+// nobody had said. Names and titles are outside valueCameFromUser's three
+// mechanical field kinds on purpose, so this is the narrow guard for them:
+// reject a value that is one of our own example tokens and appears nowhere
+// in what the user typed. A user who genuinely answers "President" is
+// unaffected — their own word is right there in userText.
+export function isEchoedExample(
+  example: string | undefined,
+  value: string,
+  userText: string
+): boolean {
+  if (!example) return false;
+  const candidate = value.trim().toLowerCase();
+  if (!candidate) return false;
+  if (userText.toLowerCase().includes(candidate)) return false;
+
+  return example
+    .split(/,| — | - |\/|\bor\b/)
+    .map((token) => token.trim().toLowerCase().replace(/^["']|["'.]+$/g, ""))
+    .filter((token) => token.length > 1)
+    .includes(candidate);
+}

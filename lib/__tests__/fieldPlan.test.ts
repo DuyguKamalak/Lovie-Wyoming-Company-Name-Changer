@@ -4,6 +4,7 @@ import {
   LLC_FIELD_PLAN,
   CORP_FIELD_PLAN,
   nextStep,
+  chipsForState,
   renderDirective,
   wasReadBackToUser,
   type ChatTurn,
@@ -241,4 +242,38 @@ test("open-ended steps tell the model not to offer chips at all", () => {
   const directive = renderDirective(step, {});
   assert.match(directive, /don't call suggest_replies/);
   assert.match(directive, /open-ended/);
+});
+
+// Requested after live use: several steps ask for something the user has to
+// look up or phrase precisely, and a sample answer makes the shape obvious.
+test("every asked field carries an example, and the directive marks it as never-record", () => {
+  for (const step of [...LLC_FIELD_PLAN, ...CORP_FIELD_PLAN]) {
+    if (step.kind !== "field") continue;
+    // The approval step offers its three options as chips instead.
+    if (step.key === "approval") continue;
+    assert.ok(step.example, `${step.key} has no example answer`);
+  }
+
+  const directive = renderDirective(nextStep("llc", {}, []), {});
+  assert.match(directive, /Acme Ventures LLC/);
+  assert.match(directive, /never record it as the value/);
+});
+
+// Regression guard for a bug seen in the live app: a question about the
+// signer's title shipped with the three Corp approval chips under it. The
+// model had recorded `approval` and asked the next question in the same
+// round, and the chips came from the step that round opened with.
+test("chips follow the state after the turn's records, not before", () => {
+  const beforeApproval: Record<string, string> = {
+    currentName: "Gamma Manufacturing Inc",
+    newName: "Gamma Industries Inc",
+    articleNumber: "1",
+    amendmentText: "Article 1. The name of the corporation is Gamma Industries Inc.",
+    amendmentDate: "07/01/2026",
+  };
+  const history: ChatTurn[] = [{ role: "assistant", text: beforeApproval.amendmentText }];
+
+  assert.equal(chipsForState("corp", beforeApproval, history)?.length, 3);
+  // The same turn records approval and moves to the signer's name: no chips.
+  assert.equal(chipsForState("corp", { ...beforeApproval, approval: "shareholders" }, history), null);
 });

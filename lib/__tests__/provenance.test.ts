@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { valueCameFromUser } from "../provenance";
+import { isEchoedExample, valueCameFromUser } from "../provenance";
 
 // agent.md rule 16. Two reproduced bugs, both of them well-formed values
 // that no format check could catch: an LLC run recorded
@@ -48,4 +48,24 @@ test("fields outside the three checked kinds are always allowed through", () => 
   assert.equal(valueCameFromUser("currentName", "Acme Ventures LLC", "acme ventures"), true);
   assert.equal(valueCameFromUser("signatureDate", "08/06/2026", ""), true);
   assert.equal(valueCameFromUser("approval", "board", "the board did it"), true);
+});
+
+// Found immediately after examples were added to the questions: asked for
+// the signer's title with "(for example, President, Manager, Managing
+// Member)", the user typed a name instead, and "President" was recorded — a
+// title nobody had said. Names and titles are outside valueCameFromUser's
+// mechanical checks on purpose, so this is the narrow guard for them.
+test("an example echoed back as the answer is rejected", () => {
+  const example = "President, Manager, Managing Member";
+  assert.equal(isEchoedExample(example, "President", "Jane Doe"), true);
+  assert.equal(isEchoedExample(example, "Managing Member", "Jane Doe"), true);
+  assert.equal(isEchoedExample("Jane Doe", "Jane Doe", "her name is Mary Smith"), true);
+});
+
+test("the same value is accepted when the user actually said it", () => {
+  assert.equal(isEchoedExample("President, Manager, Managing Member", "President", "I'm the President"), false);
+  assert.equal(isEchoedExample("Jane Doe", "Jane Doe", "Jane Doe"), false);
+  // Not one of our examples at all.
+  assert.equal(isEchoedExample("President, Manager", "Treasurer", "Treasurer"), false);
+  assert.equal(isEchoedExample(undefined, "President", ""), false);
 });

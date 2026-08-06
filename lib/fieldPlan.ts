@@ -28,6 +28,14 @@ export interface FieldStep {
   /** Quick replies the server ships directly — see agent.md rule 11. */
   chips?: string[];
   /**
+   * A concrete sample answer to show in the question ("for example,
+   * 03/14/2019"). Requested after live use: several steps ask for something
+   * the user has to look up or phrase precisely, and a shape to copy makes
+   * that obvious. Never a value to record — the directive says so, and
+   * provenance (agent.md rule 16) enforces it for dates, email and phone.
+   */
+  example?: string;
+  /**
    * Deterministic phrasing, used only when code has to ask without a model
    * turn (reconcileReadyForReview's last-resort veto). The normal path lets
    * the model phrase the question itself.
@@ -65,24 +73,28 @@ const SIGNER_STEPS: FieldStep[] = [
     kind: "field",
     key: "signerName",
     whatItIs: "the full name of the person who will sign the amendment, as it should be printed",
+    example: "Jane Doe",
     askText: "Who's signing the amendment? I need their full name as it should be printed on the form.",
   },
   {
     kind: "field",
     key: "signerTitle",
     whatItIs: "the signer's title in the company",
+    example: "President, Manager, Managing Member",
     askText: "What's that person's title in the company?",
   },
   {
     kind: "field",
     key: "contactPerson",
     whatItIs: "who the Secretary of State should contact about this filing (often the same person)",
+    example: "Jane Doe — or just say \"same\" if it's the signer",
     askText: "Who should the Secretary of State contact about this filing?",
   },
   {
     kind: "field",
     key: "phone",
     whatItIs: "a daytime phone number for the contact person",
+    example: "307-555-0142",
     askText: "What's the daytime phone number for that contact?",
   },
   {
@@ -90,6 +102,7 @@ const SIGNER_STEPS: FieldStep[] = [
     key: "email",
     whatItIs:
       "the contact person's email address — the state sends reminders, notices and filing evidence here",
+    example: "jane@acmeventures.com",
     askText: "And the contact's email address? The state sends filing evidence and notices there.",
   },
 ];
@@ -103,18 +116,21 @@ const NAME_STEPS = (label: "LLC" | "corporation"): FieldStep[] => [
     kind: "field",
     key: "currentName",
     whatItIs: `the ${label}'s current legal name, exactly as it appears on file with the Wyoming Secretary of State`,
+    example: label === "LLC" ? "Acme Ventures LLC" : "Acme Ventures, Inc.",
     askText: `What's the ${label}'s current legal name, exactly as it's on file with the Wyoming Secretary of State?`,
   },
   {
     kind: "field",
     key: "newName",
     whatItIs: `the new legal name, which must end in a valid ${label === "LLC" ? "LLC" : "corporate"} designator`,
+    example: label === "LLC" ? "Acme Holdings LLC" : "Acme Holdings, Inc.",
     askText: `What would you like the new name to be?`,
   },
   {
     kind: "field",
     key: "articleNumber",
     whatItIs: `the number of the article being amended — the one that states the company name in the original articles of ${label === "LLC" ? "organization" : "incorporation"}, usually 1`,
+    example: "1",
     askText: `Which article number states the company name in your original articles of ${label === "LLC" ? "organization" : "incorporation"}? It's usually Article 1.`,
   },
 ];
@@ -127,6 +143,7 @@ export const LLC_FIELD_PLAN: Step[] = [
     key: "dateOfOriginalFiling",
     whatItIs: "the date the LLC's original Articles of Organization were filed with the Wyoming Secretary of State",
     format: "mm/dd/yyyy",
+    example: "03/14/2019",
     askText:
       "What date were your original Articles of Organization filed with the Wyoming Secretary of State? (mm/dd/yyyy)",
   },
@@ -141,6 +158,7 @@ export const CORP_FIELD_PLAN: Step[] = [
     key: "amendmentDate",
     whatItIs: "the date the amendment was adopted by the corporation",
     format: "mm/dd/yyyy",
+    example: "06/15/2026",
     askText: "What date was this amendment adopted? (mm/dd/yyyy)",
   },
   {
@@ -268,6 +286,12 @@ export function renderDirective(step: Step | null, knownFields: Record<string, s
     `  field: ${step.key}`,
     `  what it is: ${step.whatItIs}`,
     ...(step.format ? [`  required format: ${step.format}`] : []),
+    ...(step.example
+      ? [
+          `  show this example in your question so they can see the shape expected: ${step.example}`,
+          "  the example is an illustration, never their answer — never record it as the value",
+        ]
+      : []),
     // A step without chips is open-ended by construction. Found live: asked
     // for the signer's name, the model offered "John Smith" / "Jane Doe" as
     // chips — names nobody had mentioned. Tapping one would launder an
@@ -282,4 +306,29 @@ export function renderDirective(step: Step | null, knownFields: Record<string, s
     NEVER_ASK,
     "If the user's message also states other fields, record every one of them too; the next step skips ahead accordingly.",
   ].join("\n");
+}
+
+// The chips that belong with a reply, given the state *after* that turn's
+// record_field calls. Reported from the live app: the model recorded
+// `approval` and asked the next question ("what's your title?") in the same
+// round, and chips taken from the round's opening step put the three
+// approval options under a title question. Deriving them from the final
+// state instead means the chips always match the step the model was asked
+// to be on.
+export function chipsForState(
+  entityType: EntityType | null,
+  knownFields: Record<string, string>,
+  history?: ChatTurn[]
+): string[] | null {
+  return nextStep(entityType, knownFields, history)?.chips ?? null;
+}
+
+// The example shown for a field, so record_field can tell a real answer from
+// the model echoing our own illustration back — see isEchoedExample.
+export function exampleFor(entityType: EntityType | null, field: string): string | undefined {
+  if (!entityType) return undefined;
+  for (const step of planFor(entityType)) {
+    if (step.kind === "field" && step.key === field) return step.example;
+  }
+  return undefined;
 }
