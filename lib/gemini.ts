@@ -7,12 +7,15 @@ import { SYSTEM_PROMPT } from "./agentPrompt";
 // system prompt (constitution VI). Don't change behavior here without
 // updating agent.md first.
 
-// gemini-2.0-flash and gemini-2.5-flash are both "no longer available to
-// new users" as of this project's implementation (verified against the
-// live API, not assumed) — gemini-flash-latest is a Google-maintained
-// alias to their current recommended flash model, which sidesteps this
-// class of staleness going forward.
-const DEFAULT_MODEL = "gemini-flash-latest";
+// Verified against the live API, not assumed: gemini-2.0-flash and
+// gemini-2.5-flash are both "no longer available to new users" on this
+// project's key, and gemini-flash-latest (resolving today to
+// gemini-3.6-flash) is capped at a mere 20 free requests/day — see
+// spec.md Open Question 4 / plan.md section 9. gemini-flash-lite-latest
+// worked cleanly through the full tool-calling loop in testing and isn't
+// hitting that same wall, so it's the default until T017's fallback-chain
+// work (agent.md) lands.
+const DEFAULT_MODEL = "gemini-flash-lite-latest";
 
 function getClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
