@@ -205,7 +205,43 @@ the browser's own storage, same privacy posture as before. Add an explicit
 - Manual QA against spec.md §9 acceptance criteria: full flow for both
   entity types, opened output PDF compared against a blank official form.
 
-## 9. Pre-launch risk: form staleness
+## 9. Known limitation: free-tier daily quota (needs a decision)
+
+Confirmed during T014 manual QA against the real API (not a spec at
+implementation time — an observed fact): the free tier for
+`gemini-flash-latest` is capped at **20 `generateContent` requests per
+project per day**. The intake agent's tool-calling loop (agent.md) makes
+2-4 of those calls per single user chat turn, so this deployment can
+support roughly **5-8 total conversations per day, across all visitors
+combined**, before every user gets the 429 fallback message for the rest
+of the day. This is not a bug to fix — it's the actual shape of "free
+Gemini API" today, and constitution I means we don't reach for a paid
+key to make it go away. Options, roughly cheapest-to-implement first:
+
+1. **Ship it as-is, disclose the limit.** Honest, zero extra work, matches
+   a genuinely low-traffic landing page. Risk: the tool goes dark for
+   most of most days after a handful of users.
+2. **Cut calls per turn.** The loop currently re-calls `generateContent`
+   once per tool-call iteration even when the model could batch multiple
+   tool calls into one response — worth checking, when this is revisited,
+   whether prompting for batched calls reduces the typical 2-4 down
+   closer to 1-2, stretching 20/day further without changing the product.
+3. **Multiple free API keys, rotated.** Each Google account gets its own
+   20/day allowance; a pool of a few keys multiplies capacity linearly.
+   Still "free tier only" per constitution I, but adds operational
+   complexity (key rotation, more places a key can leak) for a fragile,
+   quota-dependent gain.
+4. **A different free model/provider for the intake agent.** E.g. a
+   Gemma open model, or a different provider's free tier, might carry a
+   separate/higher daily allowance — unverified, would need the same
+   kind of real-API testing done here before trusting it, and changes
+   agent.md's assumptions about function-calling quality.
+
+No option is implemented — this needs a decision from the repo owner
+before the feature is considered launch-ready, tracked as a task in
+`tasks.md`.
+
+## 10. Pre-launch risk: form staleness
 
 This sandbox cannot reach `sos.wyo.gov` (network policy), so the vendored
 PDFs were verified by field-structure extraction + the form's own embedded
@@ -215,7 +251,7 @@ manual check: open the live URLs
 sos.wyo.gov/Forms/Business/PROF/P-Amendment.pdf) in a normal browser and
 diff against the vendored copies. Tracked as a task in `tasks.md`.
 
-## 10. Decisions (signed off)
+## 11. Decisions (signed off)
 
 1. Generated PDF is flattened before download (§5).
 2. Conversation/review state survives a page refresh via `sessionStorage`,

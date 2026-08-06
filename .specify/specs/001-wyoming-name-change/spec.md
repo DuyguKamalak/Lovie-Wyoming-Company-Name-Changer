@@ -187,14 +187,23 @@ gets filed with the state.
    registration ID field at all; it's not part of the data model.
 3. ~~Form P certification branching~~ — **RESOLVED**: three-way checkbox
    mapping confirmed against the printed form in §5.2.
-4. **Gemini free-tier rate limits in production**: confirm current
-   requests-per-day/minute limits at implementation time (they change) and
-   design a graceful "please try again in a moment" fallback.
-5. **pdf-lib compatibility smoke test**: both forms use standard `/Tx` text
-   fields and `/Btn` checkboxes with `/Off`+`/Yes` states, which `pdf-lib`
-   handles natively — but confirm with a real fill-and-save round trip as
-   the first implementation task, before building the rest of the flow on
-   top of it.
+4. ~~Gemini free-tier rate limits in production~~ — **RESOLVED, and it's a
+   real constraint, not a formality**: hit it directly during T014 testing.
+   The current free tier for `gemini-flash-latest` (resolving today to
+   `gemini-3.6-flash`) is capped at **20 `generateContent` requests per
+   project per day** (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`).
+   Because the intake agent's tool-calling loop (agent.md) typically makes
+   2-4 `generateContent` calls per single user chat turn (one per
+   iteration until the model stops calling tools), 20 requests/day works
+   out to roughly **5-8 total user conversations per day, across every
+   visitor to the site combined** — not per-user, per-deployment. The
+   graceful 429 fallback (FR/plan.md section 3) means it fails
+   *visibly*, not silently, but the app would realistically go
+   unavailable to new users for the rest of most days after a handful of
+   conversations. This is a real product-level tradeoff of "free-tier
+   only" (constitution I), not a solved problem — see plan.md section 9
+   for options and the decision needed before this is launch-ready.
+5. ~~pdf-lib compatibility smoke test~~ — **RESOLVED**: T002, see tasks.md.
 
 ## 9. Acceptance criteria (definition of done for this feature)
 
