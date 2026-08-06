@@ -211,7 +211,7 @@ test("composeReply pairs each question with its own chips, and nothing else", ()
     amendmentDate: "07/01/2026",
   };
   const history: ChatTurn[] = [{ role: "assistant", text: beforeApproval.amendmentText }];
-  const clean = { rejected: false, recordedNothing: false, sameStep: false };
+  const clean = { rejected: false, recordedNothing: false, sameStep: false, askedForAdvice: false, askedAQuestion: false };
 
   const approval = composeReply(nextStep("corp", beforeApproval, history)!, beforeApproval, clean);
   assert.match(approval.reply, /how the amendment was approved/i);
@@ -225,7 +225,7 @@ test("composeReply pairs each question with its own chips, and nothing else", ()
 
 test("composeReply explains a rejected answer, then repeats the same question", () => {
   const step = nextStep("llc", { currentName: "Acme Ventures LLC" }, [])!;
-  const { reply } = composeReply(step, {}, { rejected: true, recordedNothing: true, sameStep: true });
+  const { reply } = composeReply(step, {}, { rejected: true, recordedNothing: true, sameStep: true, askedForAdvice: false, askedAQuestion: false });
 
   assert.match(reply, /missing a valid designator/i);   // the step's retry note
   assert.match(reply, /What would you like the new name to be\?/); // verbatim question
@@ -233,10 +233,10 @@ test("composeReply explains a rejected answer, then repeats the same question", 
 
 test("composeReply says so when nothing was understood, but not when the flow moved on", () => {
   const step = nextStep("llc", {}, [])!;
-  const stuck = composeReply(step, {}, { rejected: false, recordedNothing: true, sameStep: true });
+  const stuck = composeReply(step, {}, { rejected: false, recordedNothing: true, sameStep: true, askedForAdvice: false, askedAQuestion: false });
   assert.match(stuck.reply, /didn't catch that/i);
 
-  const moved = composeReply(step, {}, { rejected: false, recordedNothing: true, sameStep: false });
+  const moved = composeReply(step, {}, { rejected: false, recordedNothing: true, sameStep: false, askedForAdvice: false, askedAQuestion: false });
   assert.doesNotMatch(moved.reply, /didn't catch that/i);
 });
 
@@ -245,7 +245,7 @@ test("composeReply says so when nothing was understood, but not when the flow mo
 test("the same step always produces byte-identical text", () => {
   const fields = { currentName: "Acme Ventures LLC" };
   const step = nextStep("llc", fields, [])!;
-  const clean = { rejected: false, recordedNothing: false, sameStep: false };
+  const clean = { rejected: false, recordedNothing: false, sameStep: false, askedForAdvice: false, askedAQuestion: false };
   assert.equal(composeReply(step, fields, clean).reply, composeReply(step, fields, clean).reply);
   assert.equal(questionFor(step, fields), (step as { question: string }).question);
 });
@@ -286,4 +286,60 @@ test("stepForQuestion identifies the question the user is answering", () => {
 
   assert.equal(stepForQuestion(ENTITY_TYPE_STEP.question, null, {}), ENTITY_TYPE_STEP);
   assert.equal(stepForQuestion("something we never said", "corp", fields), null);
+});
+
+// (c) from the design discussion: the agent still writes nothing, so "why do
+// you even need this?" is answered by one fixed sentence per step rather
+// than by a model turn. Same words every time, then the same question again.
+test("an unanswered question comes back with a fixed reason, not a bare repeat", () => {
+  const step = nextStep("llc", { currentName: "Acme Ventures LLC" }, [])!;
+  const { reply } = composeReply(step, {}, {
+    rejected: false,
+    recordedNothing: true,
+    sameStep: true,
+    askedForAdvice: false,
+    askedAQuestion: false,
+  });
+
+  assert.match(reply, /I didn't catch that\./);
+  assert.match(reply, /the whole point of the filing/); // the step's fixed `why`
+  assert.match(reply, /What would you like the new name to be\?/);
+});
+
+test("every step has a reason it can give for asking", () => {
+  for (const step of [...LLC_FIELD_PLAN, ...CORP_FIELD_PLAN, ENTITY_TYPE_STEP]) {
+    assert.ok(step.why.trim().length > 0, `${step.kind === "field" ? step.key : step.kind} has no why`);
+  }
+});
+
+// agent.md rule 2 used to live in the system prompt. The model no longer
+// writes anything the user reads, so the rule is enforced here instead.
+test("a request for legal or tax advice gets the disclaimer, then the question again", () => {
+  const step = nextStep("llc", { currentName: "Acme Ventures LLC" }, [])!;
+  const { reply } = composeReply(step, {}, {
+    rejected: false,
+    recordedNothing: true,
+    sameStep: true,
+    askedForAdvice: true,
+    askedAQuestion: true,
+  });
+
+  assert.match(reply, /can't advise/i);
+  assert.match(reply, /lawyer or accountant/i);
+  assert.match(reply, /What would you like the new name to be\?/);
+});
+
+test("a user who asks why gets the reason, without being told they weren't understood", () => {
+  const step = nextStep("llc", { currentName: "Acme Ventures LLC" }, [])!;
+  const { reply } = composeReply(step, {}, {
+    rejected: false,
+    recordedNothing: true,
+    sameStep: true,
+    askedForAdvice: false,
+    askedAQuestion: true,
+  });
+
+  assert.doesNotMatch(reply, /didn't catch that/i);
+  assert.match(reply, /the whole point of the filing/);
+  assert.match(reply, /What would you like the new name to be\?/);
 });

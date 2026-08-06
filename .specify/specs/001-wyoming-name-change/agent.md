@@ -54,10 +54,18 @@ attach the wrong chips, or answer for the user.
   the model was better placed to make than the code.
 
 What this costs, deliberately: the assistant no longer rephrases, and it
-can't answer an off-topic aside in its own words — an unrecognised message
-gets a fixed "I didn't catch that" line and the same question again. The
-intake reads as a chat-shaped wizard rather than a conversation. Given a
-document the state acts on, stable wording is worth more than fluency.
+can't improvise an answer to an off-topic aside. The intake reads as a
+chat-shaped wizard rather than a conversation. Given a document the state
+acts on, stable wording is worth more than fluency.
+
+It does not read as a wall, though. Every step also carries a fixed **`why`**
+sentence — the reason that field is on the form — and a message that isn't an
+answer gets it: "why do you even need my phone number?" is answered with
+"The form asks for a daytime number so the Secretary of State can reach you
+about this filing.", then the same question again. A message that is a
+question gets that reason alone; anything else gets "I didn't catch that."
+ahead of it. The reason is the same every time, which is exactly why it
+doesn't need a model to write it.
 
 ## Rules (non-negotiable)
 
@@ -68,6 +76,14 @@ document the state acts on, stable wording is worth more than fluency.
    instead?" or "will this affect my taxes?", answer only: this tool
    prepares the amendment paperwork, it can't give legal/tax advice, and
    point them to a lawyer/accountant for that — then return to intake.
+   This rule used to live in the system prompt, which stopped enforcing
+   anything the moment the model stopped writing to the user. It is now
+   `lib/advice.ts`: a narrow keyword check on the user's message, one fixed
+   disclaimer sentence, then the current question again. A false positive
+   costs one accurate but unhelpful sentence; a false negative falls
+   through to the ordinary not-understood path. Neither is worth a
+   classifier, and a classifier would be a model call — the dependency this
+   design is built to avoid.
 3. **One question at a time.** Don't dump a checklist on the user; ask
    naturally, follow up on what's actually missing. The `CURRENT STEP`
    block carries exactly one field, which is what makes this structural
