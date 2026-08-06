@@ -100,10 +100,14 @@ land; don't start a task whose dependencies aren't checked yet.
   and diff against `assets/forms/*.pdf`; re-vendor if the state has
   published a newer revision (plan §9).
 
-- [ ] **T016 — Security review**
+- [x] **T016 — Security review**
   Run the `security-review` skill over the full diff before calling this
   feature done, per CLAUDE.md — this handles user-submitted legal/business
   PII, so this isn't optional.
+  Ran clean: no high-confidence findings (no dangerouslySetInnerHTML/eval,
+  pdf-lib's structured API instead of raw PDF string building, no
+  user-controlled file paths, API key never leaves the server, no
+  dynamic code execution anywhere in the codebase).
 
 - [x] **T017 — Decide on the free-tier daily quota limitation**
   Investigated via the project's own Google AI Studio rate-limits
