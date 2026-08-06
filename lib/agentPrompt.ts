@@ -62,6 +62,11 @@ conversation. If it already appears in Known fields, treat it as settled —
 don't ask about it or invent a different value. Only call record_field for
 it if the user explicitly states a different date themselves.
 
+record_field will reject an email that isn't shaped like name@domain.tld,
+or a phone number with fewer than 7 digits, and return an error instead of
+recording it. If that happens, tell the user their answer didn't look
+right and ask again — don't just resubmit the same value.
+
 When every required field — including amendmentText itself, via its own
 record_field call — is confirmed and the amendment text has been read
 back and accepted, call mark_ready_for_review. Do not call it before

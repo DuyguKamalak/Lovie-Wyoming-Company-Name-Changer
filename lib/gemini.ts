@@ -1,8 +1,16 @@
 import { GoogleGenAI, type FunctionDeclaration, type Content } from "@google/genai";
 import type { EntityType } from "./types";
 import { SYSTEM_PROMPT } from "./agentPrompt";
-import { DATE_FIELD_KEYS, normalizeDate, getTodayFormatted } from "./dateFormat";
-import { missingFields, humanizeFieldKey } from "./validation";
+import { DATE_FIELD_KEYS, normalizeDate, getTodayFormatted, isValidDate } from "./dateFormat";
+import {
+  missingFields,
+  humanizeFieldKey,
+  isValidEmail,
+  isValidPhone,
+  looksLikeAName,
+  looksLikeArticleNumber,
+  looksLikeAmendmentText,
+} from "./validation";
 
 // Everything here implements .specify/specs/001-wyoming-name-change/agent.md
 // exactly — that file is the source of truth for the four tools and the
@@ -193,6 +201,24 @@ function executeTool(
       if (!RECORD_FIELD_KEYS.includes(field as (typeof RECORD_FIELD_KEYS)[number])) {
         return { ok: false, error: `unknown field: ${field}` };
       }
+
+      // Dates first: normalize before validating, since the raw input
+      // ("August 1, 2026") isn't in the mm/dd/yyyy shape isValidDate
+      // checks — agent.md rule 10 covers the format, this covers whether
+      // the result is even a real calendar date (normalizeDate's shape
+      // regex alone would let "13/45/2020" through unchanged).
+      if (DATE_FIELD_KEYS.has(field)) {
+        const normalized = normalizeDate(value);
+        if (!isValidDate(normalized)) {
+          return {
+            ok: false,
+            error: `"${value}" isn't a valid calendar date — ask the user for the real date in mm/dd/yyyy format.`,
+          };
+        }
+        ctx.knownFields[field] = normalized;
+        return { ok: true };
+      }
+
       // Which checkbox gets checked on the actual mailed form is a real
       // legal fact, not free text — found via a real user report that the
       // model recorded an approval value from a bare "yes" that had
@@ -206,9 +232,59 @@ function executeTool(
           error: `approval must be exactly one of: ${APPROVAL_VALUES.join(", ")} — ask the user which of the three situations applies, don't guess from a "yes"`,
         };
       }
-      // agent.md rule 10: dates must be mm/dd/yyyy on the actual form —
-      // normalize here rather than trust prompt instructions alone.
-      ctx.knownFields[field] = DATE_FIELD_KEYS.has(field) ? normalizeDate(value) : value;
+      // Found via real testing that the model isn't reliable catching
+      // obviously-invalid contact info on its own — "asdfghjkl" and
+      // "jordan@" (no domain) were both accepted as emails, and
+      // letters-only garbage was accepted as a phone number in one run
+      // despite being correctly rejected in another. The SOS form requires
+      // a real email ("will receive important reminders, notices and
+      // filing evidence") and a real daytime phone, so reject obviously
+      // malformed values here instead of trusting that judgment call.
+      if (field === "email" && !isValidEmail(value)) {
+        return {
+          ok: false,
+          error: `"${value}" doesn't look like a valid email address — ask the user for a real one (e.g. name@example.com).`,
+        };
+      }
+      if (field === "phone" && !isValidPhone(value)) {
+        return {
+          ok: false,
+          error: `"${value}" doesn't look like a valid phone number — ask the user for a real daytime phone number.`,
+        };
+      }
+      // Free-text "name-shaped" fields — catches empty/pure-digit/pure-
+      // punctuation answers (e.g. an off-topic reply the model mistakenly
+      // recorded anyway). Deliberately doesn't judge whether it's a
+      // *plausible* name, just that it isn't obviously garbage. newName's
+      // designator (LLC/Inc./etc.) is checked separately, later, as a
+      // warn-not-block step (FR-005) — this isn't that check.
+      if (
+        (field === "currentName" ||
+          field === "newName" ||
+          field === "signerName" ||
+          field === "signerTitle" ||
+          field === "contactPerson") &&
+        !looksLikeAName(value)
+      ) {
+        return {
+          ok: false,
+          error: `"${value}" doesn't look like a valid answer for ${humanizeFieldKey(field)} — ask the user again.`,
+        };
+      }
+      if (field === "articleNumber" && !looksLikeArticleNumber(value)) {
+        return {
+          ok: false,
+          error: `"${value}" doesn't look like an article number — ask the user again (e.g. "1", "Article 1", "First").`,
+        };
+      }
+      if (field === "amendmentText" && !looksLikeAmendmentText(value, ctx.knownFields.newName)) {
+        return {
+          ok: false,
+          error: `That doesn't match the required "Article {n}. The name of the {limited liability company|corporation} is {newName}." template — recompose it correctly before recording it.`,
+        };
+      }
+
+      ctx.knownFields[field] = value;
       return { ok: true };
     }
     case "flag_invalid_name":
