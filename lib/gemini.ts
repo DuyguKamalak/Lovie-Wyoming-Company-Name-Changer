@@ -9,7 +9,6 @@ import {
   isNotFutureDate,
 } from "./dateFormat";
 import {
-  missingFields,
   humanizeFieldKey,
   isValidEmail,
   isValidPhone,
@@ -20,6 +19,8 @@ import {
   looksLikeAmendmentText,
 } from "./validation";
 import { composeAmendmentText } from "./composeAmendment";
+import { valueCameFromUser } from "./provenance";
+import { nextStep, renderDirective, type Step } from "./fieldPlan";
 
 // Everything here implements .specify/specs/001-wyoming-name-change/agent.md
 // exactly — that file is the source of truth for the four tools and the
@@ -300,6 +301,18 @@ function executeTool(
       if (scopeError) {
         return { ok: false, error: scopeError };
       }
+      // agent.md rule 16: the value has to trace back to something the user
+      // typed. Every check below asks "is this well-formed?" — and an
+      // invented value is perfectly well-formed, which is what let an
+      // unasked-for email and a self-quoted example date reach the form.
+      if (!valueCameFromUser(field, value, ctx.userText)) {
+        return {
+          ok: false,
+          error: `the user never gave "${value}" as the ${humanizeFieldKey(
+            field
+          )} — ask them for it instead of filling it in yourself`,
+        };
+      }
 
       // Dates first: normalize before validating, since the raw input
       // ("August 1, 2026") isn't in the mm/dd/yyyy shape isValidDate
@@ -562,8 +575,21 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     .join("\n");
 
   let reply = "";
+  // The step the reply being shipped was composed for — its chips are the
+  // ones that belong with that reply. Recomputed every round, because a
+  // record_field this round can advance the step mid-turn.
+  let stepAtReply: Step | null = null;
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    const systemInstruction = `${SYSTEM_PROMPT}\n\nCurrent state (do not re-ask what's already known here):\n${renderStateSummary(entityType, knownFields)}`;
+    // Compose before choosing the step: the read-back step only exists once
+    // there's a text to read back (agent.md rule 6).
+    composeAmendmentTextIfReady(entityType, knownFields);
+    const step = nextStep(entityType, knownFields, params.history);
+    stepAtReply = step;
+    let markReadyRejected = false;
+    const systemInstruction = `${SYSTEM_PROMPT}\n\nCurrent state (do not re-ask what's already known here):\n${renderStateSummary(
+      entityType,
+      knownFields
+    )}\n\n${renderDirective(step, knownFields)}`;
 
     const response = await generateWithFailover({
       model,
@@ -590,7 +616,20 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     // always chips for that reply — just don't let them survive the turn.
     const results = calls.map((call) => {
       const name = call.name ?? "";
-      if (name === "mark_ready_for_review") readyForReview = true;
+      if (name === "mark_ready_for_review") {
+        // Reproduced repeatedly: the model announces "everything's ready!"
+        // while a field is missing or the amendment text was never shown.
+        // Handing the reason back as a tool error — and discarding the
+        // turn's text with it, below — lets the model ask the right question
+        // in its own voice, instead of code overwriting its reply.
+        const blocker = markReadyBlocker(entityType, knownFields, params.history);
+        if (blocker) {
+          markReadyRejected = true;
+          return { ok: false, error: blocker };
+        }
+        readyForReview = true;
+        return { ok: true };
+      }
       if (name === "suggest_replies") {
         const options = call.args?.options;
         if (Array.isArray(options)) {
@@ -605,12 +644,16 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
       });
     });
 
-    if (text) {
+    // A rejected mark_ready_for_review takes this round's text with it: that
+    // text says the intake is finished, which is exactly what was just
+    // refused. Feed the rejection back and let the model compose the real
+    // next question instead.
+    if (text && !markReadyRejected) {
       reply = text;
       break;
     }
 
-    // No user-facing text yet this turn — a pure tool-calling round that
+    // No usable user-facing text yet this turn — a tool-calling round that
     // needs its results fed back before the model can compose its actual
     // reply. Push the model's own response content back verbatim (not a
     // hand-built { functionCall: {name, args} } object) — newer models
@@ -633,27 +676,10 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     contents.push({ role: "user", parts: responseParts });
   }
 
-  // Same deterministic-instead-of-hoping treatment signatureDate gets: the
-  // amendment text is fully determined by entity type + article number +
-  // new name, and agent.md rule 6's "compose it, then record_field it" step
-  // is the single most-skipped instruction in the prompt (it showed the text
-  // in chat and never recorded it, repeatedly). Compose it in code once its
-  // three inputs are known rather than re-prompting for it; the read-back
-  // guard in reconcileReadyForReview is what makes sure the user still sees
-  // and confirms it. looksLikeAmendmentText already rejects a *wrong* text
-  // at record time — this covers the text that was never recorded at all.
-  if (
-    entityType &&
-    (!knownFields.amendmentText || knownFields.amendmentText.trim() === "") &&
-    knownFields.articleNumber?.trim() &&
-    knownFields.newName?.trim()
-  ) {
-    knownFields.amendmentText = composeAmendmentText(
-      entityType,
-      knownFields.articleNumber.trim(),
-      knownFields.newName.trim()
-    );
-  }
+  // The compose step ran inside the loop (before each step was chosen), but
+  // run it once more here: a record_field in the final round can complete
+  // the newName/articleNumber pair the text is derived from.
+  composeAmendmentTextIfReady(entityType, knownFields);
 
   // The loop can run out of iterations on a pure tool-calling streak and
   // leave `reply` empty — which the client renders as an empty assistant
@@ -663,14 +689,41 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     reply = "Sorry — I lost the thread there. Could you say that again?";
   }
 
+  // Plan chips beat model chips: the steps whose options actually matter
+  // (entity type, Corp approval, the read-back confirmation) carry theirs in
+  // the field plan precisely so they don't depend on the model remembering
+  // to call suggest_replies. Its chips are still used for the ad-hoc
+  // enumerable question the plan doesn't know about.
+  const chips = stepAtReply?.kind === "field" ? stepAtReply.chips : stepAtReply?.chips;
+
   return {
     ...reconcileReadyForReview(entityType, knownFields, readyForReview, reply, {
       history: params.history,
-      suggestedReplies,
+      suggestedReplies: chips ?? suggestedReplies,
     }),
     entityType,
     knownFields,
   };
+}
+
+// agent.md rule 6: amendmentText is fully determined by entity type +
+// article number + new name, and "compose it, then record_field it" was the
+// single most-skipped instruction in the prompt — the model showed the text
+// in chat and never recorded it, repeatedly. Composing it in code removes
+// the failure mode entirely; the read-back step is what still puts it in
+// front of the user. Only fills a gap, never overwrites.
+function composeAmendmentTextIfReady(
+  entityType: EntityType | null,
+  knownFields: Record<string, string>
+): void {
+  if (!entityType) return;
+  if (knownFields.amendmentText && knownFields.amendmentText.trim() !== "") return;
+  if (!knownFields.articleNumber?.trim() || !knownFields.newName?.trim()) return;
+  knownFields.amendmentText = composeAmendmentText(
+    entityType,
+    knownFields.articleNumber.trim(),
+    knownFields.newName.trim()
+  );
 }
 
 // Don't trust mark_ready_for_review at face value: found via direct
@@ -698,49 +751,13 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
 // thing..." ends up repeated four times back to back — reads as robotic,
 // and it isn't even true the first three times. The rest of the
 // conversation just asks its questions plainly; this should match.
-// A humanized key name is a fine stand-in question for a plain text field
-// ("What's the signer name?"), but it is nonsense for the Corp approval
-// choice: reproduced in testing that a Corp run reaching this path asked
-// "What's the approval?" — a bare key name in place of a three-way legal
-// question, with none of the three options offered and no chips. agent.md
-// rules 8/11 apply to this question wherever it gets asked from, including
-// here. Wording mirrors CORP_APPROVAL_OPTIONS on the review screen.
-const APPROVAL_QUESTION = `One legal detail decides which box gets checked on the form — which of these describes how the amendment was approved?
-
-1. Shares haven't been issued yet, and the incorporators or board adopted it.
-2. Shares were issued, and the board adopted it without a shareholder vote.
-3. Shares were issued, and the board adopted it with shareholder approval.`;
-
-const APPROVAL_CHIPS = [
-  "No shares issued yet",
-  "Board, no shareholder vote",
-  "Board with shareholder approval",
-];
-
-const READ_BACK_CHIPS = ["Yes, that's the text", "No, let me change it"];
-
-function normalizeForCompare(value: string): string {
-  // Markdown decoration only — the model reads the text back as
-  // "> **Article 1.** The name of..." and that is still a faithful
-  // read-back. Wording differences are NOT normalized away.
-  return value
-    .replace(/[*_>`#]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-// Did the assistant actually show the user this exact amendment text at some
-// point? Only assistant turns count — the same string appearing in a user
-// message is the user typing it, not us reading it back for confirmation.
-export function wasReadBackToUser(amendmentText: string, history: ChatMessage[]): boolean {
-  const needle = normalizeForCompare(amendmentText);
-  if (!needle) return false;
-  return history.some(
-    (message) => message.role === "assistant" && normalizeForCompare(message.text).includes(needle)
-  );
-}
-
+// Last-resort veto only. The tool loop already refuses
+// mark_ready_for_review while any step remains (see markReadyBlocker), so
+// this now fires only when the loop runs out of iterations mid-repair. It
+// asks with the field plan's own deterministic wording rather than a
+// humanized key name — reproduced in testing that the old version asked
+// "What's the approval?", a bare key name standing in for a three-way legal
+// choice with none of the three options offered.
 export function reconcileReadyForReview(
   entityType: EntityType | null,
   knownFields: Record<string, string>,
@@ -752,35 +769,41 @@ export function reconcileReadyForReview(
   if (!readyForReview || !entityType) {
     return { readyForReview, reply, suggestedReplies };
   }
-  const missing = missingFields(entityType, knownFields);
-  if (missing.length > 0) {
-    // Whatever chips the model offered belonged to the reply we're about to
-    // throw away — shipping them with a different question is the same
-    // stale-chip bug the tool loop above documents.
-    if (missing[0] === "approval") {
-      return { readyForReview: false, reply: APPROVAL_QUESTION, suggestedReplies: APPROVAL_CHIPS };
-    }
-    return {
-      readyForReview: false,
-      reply: `What's the ${humanizeFieldKey(missing[0])}?`,
-      suggestedReplies: null,
-    };
-  }
 
-  // agent.md rule 6's other half, which no code enforced: the text has to be
-  // read back and confirmed, not just recorded. Reproduced in testing that
-  // a Corp run given one dense opening message recorded amendmentText,
-  // asked the approval question, and went ready-for-review without the user
-  // ever seeing the exact wording that gets mailed to the state. If it was
-  // never shown, show it now and hold the review screen for one more turn.
-  const history = options?.history;
-  if (history && !wasReadBackToUser(knownFields.amendmentText, history)) {
-    return {
-      readyForReview: false,
-      reply: `Before the review screen, here's the exact text that gets printed on the form:\n\n"${knownFields.amendmentText}"\n\nIs that word-for-word what you want to file?`,
-      suggestedReplies: READ_BACK_CHIPS,
-    };
+  const step = nextStep(entityType, knownFields, options?.history);
+  if (!step) {
+    return { readyForReview, reply, suggestedReplies };
   }
+  // Whatever chips the model offered belonged to the reply we're about to
+  // throw away — shipping them with a different question is the stale-chip
+  // bug the tool loop documents. The step brings its own.
+  return {
+    readyForReview: false,
+    reply: step.kind === "readBack" ? readBackRequest(knownFields.amendmentText) : step.askText,
+    suggestedReplies: step.chips ?? null,
+  };
+}
 
-  return { readyForReview, reply, suggestedReplies };
+export function readBackRequest(amendmentText: string): string {
+  return `Before the review screen, here's the exact text that gets printed on the form:\n\n"${amendmentText}"\n\nIs that word-for-word what you want to file?`;
+}
+
+// Why mark_ready_for_review can't be honored yet, or null when it can.
+// Returned to the model as the tool's own error result so it repairs the
+// turn itself instead of announcing a completion that didn't happen.
+export function markReadyBlocker(
+  entityType: EntityType | null,
+  knownFields: Record<string, string>,
+  history: ChatMessage[]
+): string | null {
+  if (!entityType) return "cannot mark ready: the entity type isn't set yet — call set_entity_type first";
+  const step = nextStep(entityType, knownFields, history);
+  if (!step) return null;
+  if (step.kind === "readBack") {
+    return "cannot mark ready: the amendment text has never been read back to the user — show it verbatim and ask them to confirm it first";
+  }
+  if (step.kind === "entityType") {
+    return "cannot mark ready: the entity type isn't set yet — call set_entity_type first";
+  }
+  return `cannot mark ready: ${step.key} is still missing — ask the user for it (${step.whatItIs})`;
 }

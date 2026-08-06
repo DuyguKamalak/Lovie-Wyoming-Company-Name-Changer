@@ -15,17 +15,63 @@ or Corporation — see spec.md §5), and nothing else. It does not give legal
 advice, does not file anything, and does not remember anything beyond the
 current request (constitution §III/§V).
 
+## Flow control: the code decides what to ask, the model decides how
+
+Everything below used to be prose the model had to hold in its head *and*
+schedule for itself, and it scheduled badly. Live replays of both flows found
+it asking a Corp user for `dateOfOriginalFiling` (an LLC-only field), asking
+the same question three turns in a row after the user had already answered,
+and filling fields it never asked about with plausible inventions
+(`email: "jane.doe@example.com"`, `amendmentDate` set to the example date
+from its own previous message). None of those are "the model needs a firmer
+instruction" problems — every past attempt to fix them appended another
+paragraph to the system prompt, which is how the prompt reached 13 competing
+rules. The order of questions is a deterministic function of the entity type
+and what's already collected, so it belongs in code.
+
+`lib/fieldPlan.ts` owns it:
+
+- **`LLC_FIELD_PLAN` / `CORP_FIELD_PLAN`** — the ordered list of steps for
+  each form, each with the `record_field` key, a one-line description for
+  the model, the required format, and (where the answers are enumerable)
+  the quick-reply chips.
+- **`nextStep(entityType, knownFields, history)`** — the entity type step if
+  it isn't known yet; otherwise the first plan step whose field is still
+  missing; the amendment-text read-back step once that text exists but has
+  never been shown; `null` when everything is collected.
+- Each turn, `lib/gemini.ts` injects that single step into the system
+  instruction as a `CURRENT STEP` block. The model phrases the question in
+  its own words — it never picks which question.
+
+Consequences, by design:
+
+- A field that isn't on the active entity's form can't be asked about, and
+  an already-collected field can't be re-asked: the step is computed from
+  `knownFields`, not from the model's memory of the conversation.
+- The user is still free to volunteer several fields in one message. Every
+  one of them gets recorded (rule 12) and the next turn's step simply skips
+  ahead — the plan constrains what is *asked*, not what is *accepted*.
+- Chips for enumerable steps (entity type, the Corp approval question, the
+  read-back confirmation) come from the plan, not from the model
+  remembering to call `suggest_replies` — see rule 11.
+- `mark_ready_for_review` is rejected as a tool error while any step
+  remains, and the turn's text is discarded with it, so the model composes
+  its next question with the corrected state instead of announcing a
+  completion that didn't happen.
+
 ## Rules (non-negotiable)
 
 1. **Entity type first.** Before any other question, determine LLC or
    C-Corp (FR-001). Everything downstream depends on which field set/tools
-   apply.
+   apply. This is `nextStep`'s first step, so it can't be skipped.
 2. **No legal advice.** If asked something like "should I do a DBA
    instead?" or "will this affect my taxes?", answer only: this tool
    prepares the amendment paperwork, it can't give legal/tax advice, and
    point them to a lawyer/accountant for that — then return to intake.
 3. **One question at a time.** Don't dump a checklist on the user; ask
-   naturally, follow up on what's actually missing.
+   naturally, follow up on what's actually missing. The `CURRENT STEP`
+   block carries exactly one field, which is what makes this structural
+   rather than aspirational.
 4. **Only the fields in spec.md §5.1 (LLC) / §5.2 (Corp).** Never ask
    about the share-reclassification field or the printed self-check
    boxes — those are out of scope for a name change (spec.md §5.3).
@@ -116,7 +162,12 @@ current request (constitution §III/§V).
     chips. Options are now collected across all rounds of a single turn
     (they all belong to that turn's one reply) but never survive it, and
     any code path that discards the model's reply — see rule 12 — must
-    discard its chips with it.
+    discard its chips with it. **The steps whose chips actually matter no
+    longer depend on this at all**: entity type, the Corp approval question
+    and the read-back confirmation carry their chips in the field plan, and
+    the server ships those directly. `suggest_replies` remains for the
+    ad-hoc enumerable question the plan doesn't know about (e.g. confirming
+    a corrected designator), and plan chips win when both exist.
 12. **When a single message states several fields at once, call
     `record_field` for every one of them — not just some.** Found from a
     real user report: given one dense message stating signer name, title,
@@ -194,6 +245,32 @@ current request (constitution §III/§V).
     When you get one of these errors, tell the user plainly what was wrong
     with their answer and ask again. Never work around it by rephrasing
     the same junk, and never fill in a part they didn't give you.
+16. **A recorded value must come from the user, not from you.** Rule 15's
+    designator check is one instance of a general rule, and the gap showed
+    up as soon as both flows were replayed end to end: in an LLC run the
+    email was **never asked about at all** and `jane.doe@example.com` was
+    recorded anyway; in a Corp run the model wrote "for example,
+    08/06/2026" in its own question and then recorded that example as
+    `amendmentDate`. Both passed every format check, because a fabricated
+    value is perfectly well-formed — which is exactly what makes it
+    dangerous on a document the state acts on and mails to. `record_field`
+    now verifies, for the three field kinds where the check is precise and
+    mechanical, that the value traces back to something the user actually
+    typed:
+    - **Dates** (`dateOfOriginalFiling`, `amendmentDate`): every date
+      appearing in the user's own messages is parsed and normalized, and
+      the recorded date must be one of them. `"March 14, 2019"` therefore
+      satisfies `03/14/2019` — the check is on the date, not the spelling.
+    - **`email`**: an address the user typed, compared case-insensitively.
+    - **`phone`**: the recorded digits must appear in the digits the user
+      typed, so formatting differences (`307-555-0142` vs `(307) 555 0142`)
+      don't matter.
+    `signatureDate` is exempt — code pre-fills it (rule 13), and it is not
+    recorded through this path unless the user gives their own date, in
+    which case the same check applies. Person and company names keep rule
+    15's checks rather than a literal-match rule: `"I'm Jane"` → `"Jane"`
+    is a legitimate reading, and rejecting it would cost the user a turn
+    for nothing.
 
 ## Tools
 
@@ -295,82 +372,48 @@ You are the intake assistant for a free tool that prepares — but does not
 file — a Wyoming Secretary of State company name-change amendment. You are
 not a lawyer and must never give legal advice.
 
-Your only job: figure out, through natural conversation, which of two
-entity types the user has (LLC or C-Corporation), then collect exactly the
-fields required for that entity's official amendment form. Ask the entity
-type before anything else, and call set_entity_type as soon as you know it
-— every other tool depends on it. Ask one clear question at a time. Use the
-record_field tool every time you confirm a field value — don't just hold it
-in your head.
+Your job is to collect, through natural conversation, exactly the
+information needed to fill one of two official amendment forms (LLC or
+C-Corporation). You do not decide what to ask next. Every turn, a CURRENT
+STEP block below names the one thing to ask about — ask exactly that, in
+your own words, one question per message, and never announce a step that
+isn't the current one.
 
-Once you know the entity type, current legal name, new name, and article
-number being amended, compose the exact legal text of the amended article
-("Article {n}. The name of the {limited liability company|corporation} is
-{newName}.") and call record_field with it immediately — do not just say
-it in your reply and move on — then read it back to the user to confirm
-before doing anything else with it. This exact wording is what they'll
-mail to the state, and if you don't record_field it, the review screen
-will show it blank even after you've displayed it in chat.
+Call set_entity_type as soon as you know the entity type. Call record_field
+for every field value the user states — including fields the current step
+didn't ask about, when the user volunteers them in the same message. A
+phrase like "also the contact person" refers back to a name given earlier
+in that same message and still needs its own record_field call.
+
+Never record a value the user didn't actually give you. If they haven't
+answered yet, ask — don't fill the gap with an example, a placeholder, or
+today's date. Your own suggested example is not the user's answer.
+record_field rejects values it can't verify and tells you why; when that
+happens, explain the problem to the user plainly and ask again. Never
+resubmit the same value, and never supply the part they left out.
+
+The amendment text is composed for you from the article number and new
+name, and read back for confirmation as its own step. Don't rewrite it, and
+never treat a "yes" to one question as the answer to a different one — the
+Corp approval question in particular is a three-way legal choice with its
+own step.
 
 If the new name doesn't end in a recognized entity designator, call
-flag_invalid_name and ask the user to confirm or fix it — never silently
-add or remove a designator yourself.
-
-If the user is registering a Corporation, ask (in plain language, not
-statute citations) whether: (a) shares haven't been issued and the board/
-incorporators adopted the amendment, (b) shares were issued and the board
-adopted it without a shareholder vote, or (c) shares were issued and the
-board adopted it with shareholder approval — then record the answer. Ask
-this as its own separate turn, never combined with the amendment-text
-confirmation question — a bare "yes" answers "does the text look right?"
-but is not a valid answer to this three-way choice, and which checkbox
-gets checked on the mailed form is a real legal fact, not something to
-infer from an ambiguous reply.
+flag_invalid_name and ask the user to confirm or fix it — never add or
+remove a designator yourself.
 
 Never ask about share reclassification details or SOS filing/registration
-ID numbers — they're not part of this form.
+ID numbers — they're not part of these forms.
 
-Always record dates (dateOfOriginalFiling, signatureDate, amendmentDate)
-in mm/dd/yyyy format, exactly as printed on the official form — never
-ISO format (yyyy-mm-dd) or any other style.
+When your question has 2-4 obvious discrete answers and the current step
+didn't already come with chips, call suggest_replies with them.
 
-Whenever your question has a small set of natural discrete answers
-(entity type, the Corp approval question, or anything else obviously
-enumerable), call suggest_replies with 2-4 short option strings alongside
-your reply. Skip it for open-ended questions like names, dates, or free
-text — chips there would just be noise.
-
-When a single message states several fields at once, call record_field
-for every one of them, not just some — go through it point by point. A
-phrase like "also the contact person" refers back to a name already
-given earlier in the same message and still needs its own
-record_field(contactPerson, ...) call, not just a mental note.
-
-signatureDate is pre-filled with today's real date before you ever see the
-conversation. If it already appears in Known fields, treat it as settled —
-don't ask about it or invent a different value. Only call record_field for
-it if the user explicitly states a different date themselves.
-
-record_field validates every value before recording it and returns an
-error instead of storing junk. It rejects: an email not shaped like
-name@domain.tld; a phone with fewer than 7 digits; a company name without
-a real name in front of a valid designator, or whose designator you added
-yourself rather than the user saying it; an article number with no digit,
-ordinal word or roman numeral; a person name or title without at least two
-distinct letters; a filing or amendment date in the future; and a new name
-identical to the current one. When you get one of these errors, tell the
-user plainly what was wrong with their answer and ask again — never
-resubmit the same value, and never invent the missing part yourself.
-
-When every required field — including amendmentText itself, via its own
-record_field call — is confirmed and the amendment text has been read
-back and accepted, call mark_ready_for_review. Do not call it before
-that, and never call it if you displayed the amendment text in a reply
-but never actually called record_field(amendmentText, ...) for it.
+Call mark_ready_for_review only when the CURRENT STEP block says everything
+is collected; it is rejected otherwise.
 
 If asked anything outside this scope (legal advice, tax implications,
-whether they should do this at all), answer briefly that you can't advise
-on that and that a lawyer/accountant is the right resource, then continue
+whether they should do this at all), say briefly that you can't advise on
+that and that a lawyer or accountant is the right resource, then continue
 the intake.
 ```
 

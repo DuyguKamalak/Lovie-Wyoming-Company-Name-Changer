@@ -8,7 +8,6 @@ import {
   isTransientError,
   isKeyLevelFailure,
   entityScopeError,
-  wasReadBackToUser,
   type ChatMessage,
 } from "../gemini";
 import { LLC_REQUIRED_KEYS, CORP_REQUIRED_KEYS } from "../validation";
@@ -56,7 +55,8 @@ test("reconcileReadyForReview overrides readyForReview when fields are actually 
   const result = reconcileReadyForReview("llc", incomplete, true, "All set, taking you to review!");
 
   assert.equal(result.readyForReview, false);
-  assert.match(result.reply, /signer name/);
+  // Phrasing comes from the field plan now, not from humanizing the key.
+  assert.match(result.reply, /signing the amendment/i);
 });
 
 // Regression guard for a second real bug found alongside the one above:
@@ -74,14 +74,17 @@ test("reconcileReadyForReview asks about only the first missing field, one at a 
   delete (incomplete as Record<string, string | undefined>).email;
 
   const first = reconcileReadyForReview("llc", incomplete, true, "All set!");
-  assert.match(first.reply, /signer name/);
-  assert.doesNotMatch(first.reply, /contact person/);
-  assert.doesNotMatch(first.reply, /phone/);
-  assert.doesNotMatch(first.reply, /email/);
+  assert.match(first.reply, /signing the amendment/i);
+  assert.doesNotMatch(first.reply, /contact/i);
+  assert.doesNotMatch(first.reply, /phone/i);
+  assert.doesNotMatch(first.reply, /email/i);
 
-  const afterSignerName = { ...incomplete, signerName: "Jordan Smith" };
-  const second = reconcileReadyForReview("llc", afterSignerName, true, "All set!");
-  assert.match(second.reply, /contact person/);
+  // signerTitle comes next in the plan, then the contact fields — still one
+  // question per call, never a combined list.
+  const afterSigner = { ...incomplete, signerName: "Jordan Smith", signerTitle: "Manager" };
+  const second = reconcileReadyForReview("llc", afterSigner, true, "All set!");
+  assert.match(second.reply, /contact/i);
+  assert.doesNotMatch(second.reply, /phone/i);
 });
 
 test("reconcileReadyForReview leaves readyForReview true when everything is actually present", () => {
@@ -148,7 +151,7 @@ test("reconcileReadyForReview drops the model's chips when it overrides the repl
     suggestedReplies: ["Yes", "No"],
   });
 
-  assert.match(result.reply, /signer name/);
+  assert.match(result.reply, /signing the amendment/i);
   assert.equal(result.suggestedReplies, null);
 });
 
@@ -197,23 +200,6 @@ test("reconcileReadyForReview honors ready once the text has been read back", ()
   assert.equal(result.reply, "All set!");
 });
 
-test("wasReadBackToUser ignores markdown decoration and whitespace, not wording", () => {
-  const text = "Article 1. The name of the corporation is Acme Holdings, Inc.";
-  assert.equal(
-    wasReadBackToUser(text, [
-      { role: "assistant", text: "> **Article 1.**  The name of the\ncorporation is Acme Holdings, Inc." },
-    ]),
-    true
-  );
-  // Said by the user, not read back by the assistant — doesn't count.
-  assert.equal(wasReadBackToUser(text, [{ role: "user", text }]), false);
-  assert.equal(
-    wasReadBackToUser(text, [
-      { role: "assistant", text: "Article 1. The name of the corporation is Acme Ventures, Inc." },
-    ]),
-    false
-  );
-});
 
 // Regression guard: record_field's enum is a flat list of every key across
 // both entity types, so nothing stopped the model from recording `approval`
