@@ -6,6 +6,7 @@ import { useIntakeDispatch, useIntakeState, startOver } from "../state/IntakeCon
 import { Disclaimer } from "../components/Disclaimer";
 import { designatorWarning } from "@/lib/validation";
 import { CORP_APPROVAL_OPTIONS, fieldConfigFor } from "./fieldConfig";
+import { formatGenerateError } from "./formatGenerateError";
 import styles from "./review.module.css";
 
 export default function ReviewPage() {
@@ -47,7 +48,7 @@ export default function ReviewPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Couldn't generate the PDF. Please check the fields above and try again.");
+        setError(formatGenerateError(data, fields));
         return;
       }
       const blob = await res.blob();

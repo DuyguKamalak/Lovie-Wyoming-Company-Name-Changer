@@ -1,6 +1,7 @@
 import { GoogleGenAI, type FunctionDeclaration, type Content } from "@google/genai";
 import type { EntityType } from "./types";
 import { SYSTEM_PROMPT } from "./agentPrompt";
+import { DATE_FIELD_KEYS, normalizeDate } from "./dateFormat";
 
 // Everything here implements .specify/specs/001-wyoming-name-change/agent.md
 // exactly — that file is the source of truth for the four tools and the
@@ -154,7 +155,9 @@ function executeTool(
       if (!RECORD_FIELD_KEYS.includes(field as (typeof RECORD_FIELD_KEYS)[number])) {
         return { ok: false, error: `unknown field: ${field}` };
       }
-      ctx.knownFields[field] = value;
+      // agent.md rule 10: dates must be mm/dd/yyyy on the actual form —
+      // normalize here rather than trust prompt instructions alone.
+      ctx.knownFields[field] = DATE_FIELD_KEYS.has(field) ? normalizeDate(value) : value;
       return { ok: true };
     }
     case "flag_invalid_name":
