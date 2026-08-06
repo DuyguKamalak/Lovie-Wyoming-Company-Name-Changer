@@ -1,4 +1,5 @@
 import type { EntityType } from "./types";
+import { ADVICE_DISCLAIMER } from "./advice";
 
 // Every question the user sees, in the order they see them — see agent.md's
 // "Flow control" section. Both the order and the exact wording live here
@@ -28,6 +29,14 @@ export interface FieldStep {
   chips?: string[];
   /** Prepended when the previous answer was rejected, ahead of the same question. */
   retryNote: string;
+  /**
+   * Why this field is needed, in one fixed sentence — shown when the user's
+   * message wasn't an answer at all ("why do you even need my phone
+   * number?"). Fixed text rather than a model turn on purpose: it's the same
+   * answer every time, so there is nothing for a model to decide, and the
+   * agent still never writes anything the user reads.
+   */
+  why: string;
 }
 
 export interface EntityTypeStep {
@@ -35,12 +44,14 @@ export interface EntityTypeStep {
   question: string;
   chips: string[];
   retryNote: string;
+  why: string;
 }
 
 export interface ReadBackStep {
   kind: "readBack";
   chips: string[];
   retryNote: string;
+  why: string;
 }
 
 export type Step = FieldStep | EntityTypeStep | ReadBackStep;
@@ -51,12 +62,14 @@ export const ENTITY_TYPE_STEP: EntityTypeStep = {
     "First — is your company a Wyoming LLC or a Wyoming Corporation? The two file different amendment forms.",
   chips: ["Wyoming LLC", "Wyoming Corporation"],
   retryNote: "I need to know which one it is before anything else.",
+  why: "Wyoming has a different official amendment form for each, so everything after this depends on the answer.",
 };
 
 export const READ_BACK_STEP: ReadBackStep = {
   kind: "readBack",
   chips: ["Yes, that's the text", "No, let me change it"],
   retryNote: "Let's confirm the wording first.",
+  why: "This exact sentence is what gets printed and mailed to the state, so it's worth reading once before we go on.",
 };
 
 // The read-back is the one question with a value in it, so it's a template
@@ -76,12 +89,14 @@ function signerSteps(entityLabel: "LLC" | "corporation"): FieldStep[] {
       question:
         "Who's signing the amendment? I need their full name as it should be printed on the form. (for example, Jane Doe)",
       retryNote: "That doesn't look like a person's full name.",
+      why: "The form has a signature block, and the name printed under it has to match whoever signs it.",
     },
     {
       kind: "field",
       key: "signerTitle",
       question: `What's that person's title in the company? (for example, ${titleExamples})`,
       retryNote: "That doesn't look like a title.",
+      why: "The form prints the signer's title next to their name to show they can sign for the company.",
     },
     {
       kind: "field",
@@ -89,12 +104,14 @@ function signerSteps(entityLabel: "LLC" | "corporation"): FieldStep[] {
       question:
         'Who should the Secretary of State contact about this filing? Say "same" if it\'s the person signing. (for example, Jane Doe)',
       retryNote: "That doesn't look like a person's name.",
+      why: "The form has a contact block the Secretary of State uses if there's a question about the filing.",
     },
     {
       kind: "field",
       key: "phone",
       question: "What's a daytime phone number for that contact? (for example, 307-555-0142)",
       retryNote: "That doesn't look like a phone number.",
+      why: "The form asks for a daytime number so the Secretary of State can reach you about this filing.",
     },
     {
       kind: "field",
@@ -102,6 +119,7 @@ function signerSteps(entityLabel: "LLC" | "corporation"): FieldStep[] {
       question:
         "And their email address? The state sends reminders, notices and filing evidence there. (for example, jane@acmeventures.com)",
       retryNote: "That doesn't look like an email address.",
+      why: "The state sends reminders, notices and the filing evidence to this address, so it has to be a real one.",
     },
   ];
 }
@@ -118,6 +136,7 @@ function nameSteps(entityLabel: "LLC" | "corporation"): FieldStep[] {
         isLlc ? "Acme Ventures LLC" : "Acme Ventures, Inc."
       })`,
       retryNote: `That doesn't look like a full legal ${entityLabel} name.`,
+      why: "The form asks for the name currently on record, so the state can match this amendment to your existing filing.",
     },
     {
       kind: "field",
@@ -126,6 +145,7 @@ function nameSteps(entityLabel: "LLC" | "corporation"): FieldStep[] {
         ? 'What would you like the new name to be? Wyoming requires it to end in "LLC", "L.L.C." or "Limited Liability Company". (for example, Acme Holdings LLC)'
         : 'What would you like the new name to be? Wyoming requires it to end in a corporate designator — "Inc.", "Corporation", "Corp.", "Company", "Limited" or "Ltd.". (for example, Acme Holdings, Inc.)',
       retryNote: "That name is missing a valid designator, or it matches the current name.",
+      why: "This is the name the amendment changes to — it's the whole point of the filing.",
     },
     {
       kind: "field",
@@ -134,6 +154,7 @@ function nameSteps(entityLabel: "LLC" | "corporation"): FieldStep[] {
         isLlc ? "organization" : "incorporation"
       } states the company name? It's usually Article 1. (for example, 1)`,
       retryNote: "That doesn't look like an article number.",
+      why: "The amendment has to say which article it replaces, and the company name usually sits in Article 1.",
     },
   ];
 }
@@ -147,6 +168,7 @@ export const LLC_FIELD_PLAN: Step[] = [
     question:
       "What date were your original Articles of Organization filed with the Wyoming Secretary of State? Use mm/dd/yyyy. (for example, 03/14/2019)",
     retryNote: "That doesn't look like a real date in mm/dd/yyyy form.",
+    why: "The form asks when the original articles were filed, so the state can find your existing record.",
   },
   ...signerSteps("LLC"),
 ];
@@ -159,6 +181,7 @@ export const CORP_FIELD_PLAN: Step[] = [
     key: "amendmentDate",
     question: "What date was this amendment adopted? Use mm/dd/yyyy. (for example, 06/15/2026)",
     retryNote: "That doesn't look like a real date in mm/dd/yyyy form.",
+    why: "The form records the date the corporation adopted this amendment, which is a separate date from when you sign it.",
   },
   {
     // agent.md rule 8: plain language, never statute citations, never bundled
@@ -172,6 +195,7 @@ export const CORP_FIELD_PLAN: Step[] = [
 3. Shares were issued, and the board adopted it with shareholder approval.`,
     chips: ["No shares issued yet", "Board, no shareholder vote", "Board with shareholder approval"],
     retryNote: "I need to know which of the three situations applies — it decides a checkbox on the form.",
+    why: "The form has three approval checkboxes and exactly one has to be checked, so the state knows the amendment was adopted properly.",
   },
   ...signerSteps("corporation"),
 ];
@@ -241,10 +265,14 @@ export function questionFor(step: Step, knownFields: Record<string, string>): st
 export interface TurnOutcome {
   /** A record_field for this step's field was refused (bad value, or not something the user said). */
   rejected: boolean;
-  /** Nothing at all was extracted from the user's message. */
+  /** Nothing new was learned from the user's message. */
   recordedNothing: boolean;
   /** The step didn't move — so the user is being asked the same thing again. */
   sameStep: boolean;
+  /** The message read as a request for legal or tax advice (agent.md rule 2). */
+  askedForAdvice: boolean;
+  /** The message was itself a question — so it gets an answer, not "I didn't catch that". */
+  askedAQuestion: boolean;
 }
 
 /**
@@ -259,11 +287,21 @@ export function composeReply(
   outcome: TurnOutcome
 ): { reply: string; suggestedReplies: string[] | null } {
   const question = questionFor(step, knownFields);
+  const stuck = outcome.recordedNothing && outcome.sameStep;
+  // Priority: a refused value is the most specific thing to say; then rule
+  // 2's disclaimer; then "that wasn't an answer, and here's why I'm asking".
   const note = outcome.rejected
     ? step.retryNote
-    : outcome.recordedNothing && outcome.sameStep
-      ? "I didn't catch that."
-      : null;
+    : stuck && outcome.askedForAdvice
+      ? ADVICE_DISCLAIMER
+      : stuck
+        ? // A genuine question ("why do you even need this?") deserves the
+          // reason on its own; "I didn't catch that" would be answering the
+          // wrong thing. Anything else gets both.
+          outcome.askedAQuestion
+          ? step.why
+          : `I didn't catch that. ${step.why}`
+        : null;
 
   return {
     reply: note ? `${note}\n\n${question}` : question,

@@ -20,6 +20,7 @@ import {
 } from "./validation";
 import { composeAmendmentText } from "./composeAmendment";
 import { valueCameFromUser } from "./provenance";
+import { looksLikeAdviceRequest } from "./advice";
 import {
   DONE_REPLY,
   composeReply,
@@ -244,8 +245,9 @@ function executeTool(
     case "set_entity_type": {
       const entityType = args.entityType;
       if (entityType === "llc" || entityType === "corp") {
+        const changed = ctx.getEntityType() !== entityType;
         ctx.setEntityType(entityType);
-        return { ok: true };
+        return { ok: true, changed };
       }
       return { ok: false, error: "entityType must be llc or corp" };
     }
@@ -405,8 +407,12 @@ function executeTool(
         };
       }
 
+      // "changed", not just "ok": re-recording a value we already had means
+      // the user's message taught us nothing, and the reply should say so
+      // rather than silently repeating the question.
+      const changed = ctx.knownFields[field] !== value;
       ctx.knownFields[field] = value;
-      return { ok: true };
+      return { ok: true, changed };
     }
     default:
       return { ok: false, error: `unknown tool: ${name}` };
@@ -562,7 +568,7 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
         userText,
       });
       if (result.ok) {
-        recordedAny = true;
+        if (result.changed !== false) recordedAny = true;
       } else if (
         name === "record_field" &&
         stepBefore?.kind === "field" &&
@@ -611,10 +617,13 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
   }
 
   const sameStep = stepKey(stepBefore) === stepKey(step);
+  const lastUserText = [...params.history].reverse().find((m) => m.role === "user")?.text ?? "";
   const { reply, suggestedReplies } = composeReply(step, knownFields, {
     rejected: rejectedCurrentField && sameStep,
     recordedNothing: !recordedAny,
     sameStep,
+    askedForAdvice: looksLikeAdviceRequest(lastUserText),
+    askedAQuestion: lastUserText.includes("?"),
   });
 
   return { reply, entityType, knownFields, readyForReview: false, suggestedReplies };
