@@ -18,7 +18,7 @@ const STARTER_SUGGESTIONS = ["I have a Wyoming LLC", "I have a Wyoming Corporati
 // Brand-green on hover, not the purple this accidentally shipped with —
 // every colored/interactive surface in the app uses the one brand green.
 const chipClass =
-  "rounded-full border border-[#d6d3d1] bg-[#fafaf9] px-4 py-2 text-sm text-[#292524] transition-colors hover:border-brand-green hover:bg-brand-green/15 active:scale-95 disabled:opacity-50 disabled:active:scale-100";
+  "rounded-full border border-stone-300 bg-brand-cream px-4 py-2 text-sm text-stone-800 transition-colors hover:border-brand-green hover:bg-brand-green/15 active:scale-95 disabled:opacity-50 disabled:active:scale-100";
 
 export default function ChatPage() {
   const state = useIntakeState();
@@ -124,14 +124,14 @@ export default function ChatPage() {
 
         {started && (
           <form
-            className="flex gap-2 border-t border-[#e7e5e4] pt-4"
+            className="flex gap-2 border-t border-stone-200 pt-4"
             onSubmit={(e) => {
               e.preventDefault();
               sendMessage(input);
             }}
           >
             <input
-              className="flex-1 rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-brand-green"
+              className="flex-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-brand-green"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Type your answer…"
@@ -171,7 +171,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
       <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-green/15">
         <LovieLogo size={28} />
       </div>
-      <div className="whitespace-pre-wrap rounded-2xl bg-[#f5f5f4] px-4 py-2.5 leading-relaxed text-brand-black">
+      <div className="whitespace-pre-wrap rounded-2xl bg-stone-100 px-4 py-2.5 leading-relaxed text-brand-black">
         {message.text}
       </div>
     </motion.div>
@@ -184,12 +184,12 @@ function ThinkingBubble() {
       <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-green/15">
         <LovieLogo size={28} />
       </div>
-      <div className="flex items-center gap-1 rounded-2xl bg-[#f5f5f4] px-4 py-2.5">
-        <span className="mr-1 text-[#78716c]">Thinking</span>
+      <div className="flex items-center gap-1 rounded-2xl bg-stone-100 px-4 py-2.5">
+        <span className="mr-1 text-stone-500">Thinking</span>
         <span className="inline-flex gap-[3px]" aria-hidden="true">
-          <span className="h-[5px] w-[5px] animate-[thinking-bounce_1.1s_ease-in-out_infinite] rounded-full bg-[#a8a29e]" />
-          <span className="h-[5px] w-[5px] animate-[thinking-bounce_1.1s_ease-in-out_infinite] rounded-full bg-[#a8a29e] [animation-delay:0.15s]" />
-          <span className="h-[5px] w-[5px] animate-[thinking-bounce_1.1s_ease-in-out_infinite] rounded-full bg-[#a8a29e] [animation-delay:0.3s]" />
+          <span className="h-[5px] w-[5px] animate-[thinking-bounce_1.1s_ease-in-out_infinite] rounded-full bg-stone-400" />
+          <span className="h-[5px] w-[5px] animate-[thinking-bounce_1.1s_ease-in-out_infinite] rounded-full bg-stone-400 [animation-delay:0.15s]" />
+          <span className="h-[5px] w-[5px] animate-[thinking-bounce_1.1s_ease-in-out_infinite] rounded-full bg-stone-400 [animation-delay:0.3s]" />
         </span>
       </div>
     </div>
@@ -216,12 +216,12 @@ function HeroEmptyState({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
     >
-      <LovieLogo size={56} />
+      <LovieLogo size={56} priority />
       <h1 className="font-serif text-3xl font-normal">Let&apos;s change your company&apos;s name</h1>
-      <p className="mb-1 text-[#57534e]">Tell me about your Wyoming company and the new name you want.</p>
+      <p className="mb-1 text-stone-600">Tell me about your Wyoming company and the new name you want.</p>
 
       <form
-        className="flex w-full max-w-xl items-center gap-2 rounded-full border border-[#e7e5e4] bg-white py-1.5 pl-5 pr-1.5 shadow-[0_4px_20px_rgba(0,0,0,0.06)]"
+        className="flex w-full max-w-xl items-center gap-2 rounded-full border border-stone-200 bg-white py-1.5 pl-5 pr-1.5 shadow-[0_4px_20px_rgba(0,0,0,0.06)]"
         onSubmit={(e) => {
           e.preventDefault();
           onSend();

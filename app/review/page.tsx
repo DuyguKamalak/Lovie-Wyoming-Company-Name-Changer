@@ -78,7 +78,7 @@ export default function ReviewPage() {
     <div className="min-h-screen w-full bg-white text-brand-black">
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-5 py-10">
         <h1 className="font-serif text-3xl font-normal">Review before you download</h1>
-        <p className="leading-relaxed text-[#57534e]">
+        <p className="leading-relaxed text-stone-600">
           Every field below is exactly what will be printed on the official{" "}
           {entityType === "llc" ? "LLC amendment" : "corporation amendment"} form. Edit anything
           that isn&apos;t right.
@@ -90,20 +90,20 @@ export default function ReviewPage() {
               <span className="text-sm font-semibold">{field.label}</span>
               {field.multiline ? (
                 <textarea
-                  className="resize-y rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 font-sans text-base text-brand-black outline-none focus:border-brand-green"
+                  className="resize-y rounded-lg border border-stone-200 bg-white px-3 py-2 font-sans text-base text-brand-black outline-none focus:border-brand-green"
                   rows={3}
                   value={state.knownFields[field.key] ?? ""}
                   onChange={(e) => setField(field.key, e.target.value)}
                 />
               ) : (
                 <input
-                  className="rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-brand-green"
+                  className="rounded-lg border border-stone-200 bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-brand-green"
                   type="text"
                   value={state.knownFields[field.key] ?? ""}
                   onChange={(e) => setField(field.key, e.target.value)}
                 />
               )}
-              {field.help && <span className="text-sm text-[#78716c]">{field.help}</span>}
+              {field.help && <span className="text-sm text-stone-500">{field.help}</span>}
             </label>
           ))}
 

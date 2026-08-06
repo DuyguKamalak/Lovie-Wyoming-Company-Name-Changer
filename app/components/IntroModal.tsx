@@ -32,17 +32,17 @@ export function IntroModal({ open, onClose }: { open: boolean; onClose: () => vo
             <h2 id="intro-modal-title" className="font-serif text-2xl font-normal">
               Change your Wyoming company&apos;s name
             </h2>
-            <p className="text-[#44403c] leading-relaxed">
+            <p className="text-stone-700 leading-relaxed">
               Chat with an assistant about your Wyoming LLC or Corporation, and
               get a pre-filled copy of the official Secretary of State
               amendment form — ready to print, sign, and mail.
             </p>
-            <ol className="list-decimal space-y-1 pl-5 leading-relaxed text-[#44403c]">
+            <ol className="list-decimal space-y-1 pl-5 leading-relaxed text-stone-700">
               <li>Tell the assistant about your company and its new name.</li>
               <li>Review every field before anything is generated.</li>
               <li>Download the filled-in official form.</li>
             </ol>
-            <p className="rounded-[10px] border border-[#e7e5e4] bg-[#f5f5f4] p-4 text-sm leading-relaxed text-[#57534e]">
+            <p className="rounded-[10px] border border-stone-200 bg-stone-100 p-4 text-sm leading-relaxed text-stone-600">
               <strong className="text-brand-black">Not legal advice.</strong> This
               tool prepares a pre-filled copy of the official Wyoming
               Secretary of State amendment form — it does not file anything

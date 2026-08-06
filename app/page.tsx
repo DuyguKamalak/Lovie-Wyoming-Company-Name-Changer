@@ -21,7 +21,7 @@ export default function Home() {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
         >
-          <LovieLogo size={72} />
+          <LovieLogo size={72} priority />
         </motion.div>
 
         <motion.span
@@ -34,7 +34,7 @@ export default function Home() {
         </motion.span>
 
         <motion.p
-          className="mb-1 max-w-sm text-[1.05rem] text-[#555151]"
+          className="mb-1 max-w-sm text-[1.05rem] text-stone-600"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.55 }}
