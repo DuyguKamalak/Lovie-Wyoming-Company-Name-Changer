@@ -2,17 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { useIntakeDispatch, useIntakeHydrated, useIntakeState } from "../state/IntakeContext";
+import { IntroModal } from "../components/IntroModal";
+import { LovieLogo } from "../components/LovieLogo";
 import type { ChatMessage } from "@/lib/gemini";
 import styles from "./chat.module.css";
 
-// Hardcoded rather than fetched from the API on first load: it's always
-// the same opening question (agent.md rule 1), and seeding it locally
-// saves a round trip before the user has said anything.
-const OPENING_MESSAGE: ChatMessage = {
-  role: "assistant",
-  text: "Hi! I'll help you prepare a Wyoming name-change amendment. First — is your company a Wyoming LLC or a Wyoming Corporation?",
-};
+// The first-question hint chips shown in the hero state, before any
+// message has been sent — there's no agent turn yet to call
+// suggest_replies, so these two are hardcoded (agent.md rule 1: entity
+// type is always the first thing asked).
+const STARTER_SUGGESTIONS = ["I have a Wyoming LLC", "I have a Wyoming Corporation"];
 
 export default function ChatPage() {
   const state = useIntakeState();
@@ -22,18 +23,9 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestedReplies, setSuggestedReplies] = useState<string[] | null>(null);
+  const [introOpen, setIntroOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
-
-  // Wait for the sessionStorage hydration attempt to finish before seeding
-  // the opening message — otherwise this can race with IntakeProvider's own
-  // hydration effect and the opening message silently never appears (see
-  // T012 commit message).
-  useEffect(() => {
-    if (hydrated && state.history.length === 0) {
-      dispatch({ type: "ADD_MESSAGE", message: OPENING_MESSAGE });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated]);
 
   useEffect(() => {
     if (state.readyForReview) {
@@ -45,14 +37,15 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [state.history]);
 
-  async function sendMessage() {
-    const text = input.trim();
-    if (!text || loading) return;
+  async function sendMessage(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || loading) return;
 
-    const userMessage: ChatMessage = { role: "user", text };
+    const userMessage: ChatMessage = { role: "user", text: trimmed };
     const nextHistory = [...state.history, userMessage];
     dispatch({ type: "ADD_MESSAGE", message: userMessage });
     setInput("");
+    setSuggestedReplies(null);
     setLoading(true);
     setError(null);
 
@@ -75,6 +68,7 @@ export default function ChatPage() {
       if (data.entityType) dispatch({ type: "SET_ENTITY_TYPE", entityType: data.entityType });
       dispatch({ type: "MERGE_KNOWN_FIELDS", fields: data.knownFields ?? {} });
       if (data.readyForReview) dispatch({ type: "SET_READY_FOR_REVIEW", ready: true });
+      setSuggestedReplies(data.suggestedReplies ?? null);
     } catch {
       setError("Couldn't reach the assistant. Check your connection and try again.");
     } finally {
@@ -82,42 +76,176 @@ export default function ChatPage() {
     }
   }
 
+  const started = hydrated && state.history.length > 0;
+
   return (
     <div className={styles.page}>
-      <div className={styles.thread}>
-        {state.history.map((message, i) => (
-          <div
-            key={i}
-            className={message.role === "user" ? styles.userBubble : styles.assistantBubble}
-          >
-            {message.text}
-          </div>
-        ))}
-        {loading && <div className={styles.assistantBubble}>Thinking…</div>}
-        <div ref={bottomRef} />
-      </div>
+      <IntroModal open={introOpen} onClose={() => setIntroOpen(false)} />
+
+      {!started ? (
+        <HeroEmptyState
+          input={input}
+          setInput={setInput}
+          loading={loading}
+          onSend={() => sendMessage(input)}
+          onSuggestion={(s) => sendMessage(s)}
+        />
+      ) : (
+        <div className={styles.thread}>
+          {state.history.map((message, i) => (
+            <ChatBubble key={i} message={message} />
+          ))}
+          {loading && <ThinkingBubble />}
+          {!loading && suggestedReplies && suggestedReplies.length > 0 && (
+            <div className={styles.chipRow}>
+              {suggestedReplies.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={styles.chip}
+                  onClick={() => sendMessage(option)}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          )}
+          <div ref={bottomRef} />
+        </div>
+      )}
 
       {error && <p className={styles.error}>{error}</p>}
 
+      {started && (
+        <form
+          className={styles.composer}
+          onSubmit={(e) => {
+            e.preventDefault();
+            sendMessage(input);
+          }}
+        >
+          <input
+            className={styles.input}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Type your answer…"
+            disabled={loading}
+            autoFocus
+          />
+          <button className={styles.send} type="submit" disabled={loading || !input.trim()}>
+            Send
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function ChatBubble({ message }: { message: ChatMessage }) {
+  if (message.role === "user") {
+    return (
+      <motion.div
+        className={styles.userBubble}
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+      >
+        {message.text}
+      </motion.div>
+    );
+  }
+  return (
+    <motion.div
+      className={styles.assistantRow}
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+    >
+      <div className={styles.avatar}>
+        <LovieLogo size={28} />
+      </div>
+      <div className={styles.assistantBubble}>{message.text}</div>
+    </motion.div>
+  );
+}
+
+function ThinkingBubble() {
+  return (
+    <div className={styles.assistantRow}>
+      <div className={styles.avatar}>
+        <LovieLogo size={28} />
+      </div>
+      <div className={styles.assistantBubble}>
+        <span className={styles.thinkingLabel}>Thinking</span>
+        <span className={styles.thinkingDots} aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function HeroEmptyState({
+  input,
+  setInput,
+  loading,
+  onSend,
+  onSuggestion,
+}: {
+  input: string;
+  setInput: (v: string) => void;
+  loading: boolean;
+  onSend: () => void;
+  onSuggestion: (s: string) => void;
+}) {
+  return (
+    <motion.div
+      className={styles.hero}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <LovieLogo size={56} />
+      <h1 className={styles.heroTitle}>Let&apos;s change your company&apos;s name</h1>
+      <p className={styles.heroSubtitle}>
+        Tell me about your Wyoming company and the new name you want.
+      </p>
+
       <form
-        className={styles.composer}
+        className={styles.heroComposer}
         onSubmit={(e) => {
           e.preventDefault();
-          sendMessage();
+          onSend();
         }}
       >
         <input
-          className={styles.input}
+          className={styles.heroInput}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your answer…"
+          placeholder="Tell Lovie about your company…"
           disabled={loading}
           autoFocus
         />
-        <button className={styles.send} type="submit" disabled={loading || !input.trim()}>
-          Send
+        <button className={styles.heroSend} type="submit" disabled={loading || !input.trim()} aria-label="Send">
+          ➤
         </button>
       </form>
-    </div>
+
+      <div className={styles.chipRow}>
+        {STARTER_SUGGESTIONS.map((option) => (
+          <button
+            key={option}
+            type="button"
+            className={styles.chip}
+            onClick={() => onSuggestion(option)}
+            disabled={loading}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+    </motion.div>
   );
 }

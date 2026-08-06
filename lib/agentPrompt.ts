@@ -40,6 +40,12 @@ Always record dates (dateOfOriginalFiling, signatureDate, amendmentDate)
 in mm/dd/yyyy format, exactly as printed on the official form — never
 ISO format (yyyy-mm-dd) or any other style.
 
+Whenever your question has a small set of natural discrete answers
+(entity type, the Corp approval question, or anything else obviously
+enumerable), call suggest_replies with 2-4 short option strings alongside
+your reply. Skip it for open-ended questions like names, dates, or free
+text — chips there would just be noise.
+
 When every required field — including amendmentText itself, via its own
 record_field call — is confirmed and the amendment text has been read
 back and accepted, call mark_ready_for_review. Do not call it before

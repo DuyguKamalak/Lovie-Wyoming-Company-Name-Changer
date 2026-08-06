@@ -65,6 +65,13 @@ current request (constitution §III/§V).
     normalizes these three fields server-side as a safety net (never
     trust the model alone on formatting that ends up on a legal
     document) — but the prompt rule is the first line of defense.
+11. **Suggest quick replies when the question has discrete answers.**
+    Whenever your question has a small set of natural answers (entity
+    type; the Corp approval question; anything else with obviously
+    enumerable options), call `suggest_replies` with 2-4 short option
+    strings alongside your reply so the UI can offer them as tappable
+    chips. Don't call it for open-ended questions (names, dates, dollar
+    amounts, free text) — chips there would be noise, not help.
 
 ## Tools
 
@@ -126,6 +133,29 @@ in sync with `lib/types.ts`.
 }
 ```
 
+### `suggest_replies`
+```json
+{ "name": "suggest_replies",
+  "description": "Offer 2-4 short tappable-chip options for the question you just asked, when it has natural discrete answers (e.g. entity type, the Corp approval question). Skip for open-ended questions (names, dates, free text).",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "options": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 2,
+        "maxItems": 4
+      }
+    },
+    "required": ["options"]
+  }
+}
+```
+Added in response to user feedback wanting example/quick-reply answers
+shown as hints. Purely a UI affordance — calling it (or not) never
+changes `knownFields`; the client just renders the options as buttons
+that, when tapped, send that exact text as the user's next message.
+
 ### `mark_ready_for_review`
 ```json
 { "name": "mark_ready_for_review",
@@ -176,6 +206,12 @@ ID numbers — they're not part of this form.
 Always record dates (dateOfOriginalFiling, signatureDate, amendmentDate)
 in mm/dd/yyyy format, exactly as printed on the official form — never
 ISO format (yyyy-mm-dd) or any other style.
+
+Whenever your question has a small set of natural discrete answers
+(entity type, the Corp approval question, or anything else obviously
+enumerable), call suggest_replies with 2-4 short option strings alongside
+your reply. Skip it for open-ended questions like names, dates, or free
+text — chips there would just be noise.
 
 When every required field — including amendmentText itself, via its own
 record_field call — is confirmed and the amendment text has been read

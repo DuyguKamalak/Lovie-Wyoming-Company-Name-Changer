@@ -85,6 +85,24 @@ const flagInvalidNameDeclaration: FunctionDeclaration = {
   },
 };
 
+const suggestRepliesDeclaration: FunctionDeclaration = {
+  name: "suggest_replies",
+  description:
+    "Offer 2-4 short tappable-chip options for the question you just asked, when it has natural discrete answers (e.g. entity type, the Corp approval question). Skip for open-ended questions (names, dates, free text).",
+  parametersJsonSchema: {
+    type: "object",
+    properties: {
+      options: {
+        type: "array",
+        items: { type: "string" },
+        minItems: 2,
+        maxItems: 4,
+      },
+    },
+    required: ["options"],
+  },
+};
+
 const markReadyDeclaration: FunctionDeclaration = {
   name: "mark_ready_for_review",
   description:
@@ -98,6 +116,7 @@ const TOOLS = [
       setEntityTypeDeclaration,
       recordFieldDeclaration,
       flagInvalidNameDeclaration,
+      suggestRepliesDeclaration,
       markReadyDeclaration,
     ],
   },
@@ -119,6 +138,7 @@ export interface RunIntakeAgentResult {
   entityType: EntityType | null;
   knownFields: Record<string, string>;
   readyForReview: boolean;
+  suggestedReplies: string[] | null;
 }
 
 function renderStateSummary(entityType: EntityType | null, knownFields: Record<string, string>): string {
@@ -162,6 +182,8 @@ function executeTool(
     }
     case "flag_invalid_name":
       return { ok: true };
+    case "suggest_replies":
+      return { ok: true };
     case "mark_ready_for_review":
       return { ok: true };
     default:
@@ -181,6 +203,7 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
   let entityType = params.entityType;
   const knownFields: Record<string, string> = { ...params.knownFields };
   let readyForReview = false;
+  let suggestedReplies: string[] | null = null;
 
   const contents: Content[] = params.history.map((m) => ({
     role: m.role === "user" ? "user" : "model",
@@ -221,6 +244,12 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     const responseParts = calls.map((call) => {
       const name = call.name ?? "";
       if (name === "mark_ready_for_review") readyForReview = true;
+      if (name === "suggest_replies") {
+        const options = call.args?.options;
+        if (Array.isArray(options)) {
+          suggestedReplies = options.filter((o): o is string => typeof o === "string");
+        }
+      }
       const result = executeTool(name, call.args ?? {}, {
         knownFields,
         setEntityType: (e) => (entityType = e),
@@ -230,5 +259,5 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     contents.push({ role: "user", parts: responseParts });
   }
 
-  return { reply, entityType, knownFields, readyForReview };
+  return { reply, entityType, knownFields, readyForReview, suggestedReplies };
 }

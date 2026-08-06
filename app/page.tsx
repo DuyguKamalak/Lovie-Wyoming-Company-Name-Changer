@@ -1,30 +1,55 @@
+"use client";
+
+import { motion } from "framer-motion";
 import Link from "next/link";
-import { Disclaimer } from "./components/Disclaimer";
+import { LovieLogo } from "./components/LovieLogo";
 import styles from "./page.module.css";
 
 export default function Home() {
   return (
     <div className={styles.page}>
-      <main className={styles.main}>
-        <h1 className={styles.title}>Change your Wyoming company&apos;s name</h1>
-        <p className={styles.subtitle}>
-          Chat with an assistant about your Wyoming LLC or Corporation, and
-          get a pre-filled copy of the official Secretary of State amendment
-          form — ready to print, sign, and mail.
-        </p>
+      <motion.div
+        className={styles.content}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.7 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
+        >
+          <LovieLogo size={72} />
+        </motion.div>
 
-        <ol className={styles.steps}>
-          <li>Tell the assistant about your company and its new name.</li>
-          <li>Review every field before anything is generated.</li>
-          <li>Download the filled-in official form.</li>
-        </ol>
+        <motion.span
+          className={styles.wordmark}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.4 }}
+        >
+          Lovie
+        </motion.span>
 
-        <Link href="/chat" className={styles.cta}>
-          Start
-        </Link>
+        <motion.p
+          className={styles.tagline}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.55 }}
+        >
+          Change your Wyoming company&apos;s name in minutes.
+        </motion.p>
 
-        <Disclaimer />
-      </main>
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.7 }}
+        >
+          <Link href="/chat" className={styles.cta}>
+            Start
+          </Link>
+        </motion.div>
+      </motion.div>
     </div>
   );
 }

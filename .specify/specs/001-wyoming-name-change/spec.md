@@ -59,16 +59,33 @@ guidance) — the deliverable is the paperwork, ready to print, sign, and mail.
 
 ## 4. Conversation & UX flow
 
-1. **Landing page**: short explainer, disclaimer, "Start" CTA.
-2. **Chat**: assistant asks for entity type first (LLC vs C-Corp), then
-   gathers the fields listed in §5 for that entity type, asking follow-up
-   questions for anything missing or ambiguous. User can type freely; no
-   rigid script.
-3. **Review screen**: once the assistant believes it has everything, it
+Updated after direct product/design feedback on the built UI — the
+disclaimer's touchpoint moved from static landing-page text to an intro
+modal (still satisfies FR-007/US-4: seen before the user can start
+describing their company), and a branded hero empty-state replaced the
+hardcoded opening chat bubble.
+
+1. **Splash/landing page**: minimal branded screen (logo, "Lovie"
+   wordmark, one-line tagline, animated entrance) with a "Start" CTA into
+   `/chat`. No explainer text here — that moved to step 2's modal.
+2. **Intro modal**: on arriving at `/chat` with no conversation yet, a
+   modal shows the explainer (what this does, the 3-step flow) and the
+   disclaimer, with an "Okay" button to dismiss.
+3. **Hero empty state**: before the first message, a centered composer
+   ("Tell Lovie about your company…") plus two starter chips ("I have a
+   Wyoming LLC" / "I have a Wyoming Corporation"), instead of an
+   auto-seeded assistant greeting.
+4. **Chat**: assistant asks for entity type first (LLC vs C-Corp) if not
+   already given, then gathers the fields listed in §5, asking follow-up
+   questions for anything missing or ambiguous. User can type freely, or
+   tap a suggested-reply chip when the agent offers one for a
+   discrete-choice question (agent.md rule 11) — never for open-ended
+   fields like names or dates.
+5. **Review screen**: once the assistant believes it has everything, it
    transitions out of chat into a structured, labeled summary of every field
    that will be written onto the government form. User can edit any field
    directly here (plain form inputs, not chat) before proceeding.
-4. **Download**: on confirmation, the server fills the correct official PDF
+6. **Download**: on confirmation, the server fills the correct official PDF
    and returns it as a file download. No account, no email required.
 
 ## 5. Data fields — verified against the real official PDFs

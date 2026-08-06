@@ -1,57 +1,45 @@
 .page {
   display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 4rem 1.5rem;
   flex: 1;
-  font-family: var(--font-geist-sans);
+  min-height: 100vh;
+  background: #ffffff;
+  color: #171717;
 }
 
-.main {
+.content {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 1.25rem;
-  max-width: 40rem;
-  width: 100%;
+  align-items: center;
+  text-align: center;
+  gap: 0.75rem;
+  padding: 2rem;
 }
 
-.title {
-  font-size: 2.25rem;
-  line-height: 1.15;
+.wordmark {
+  font-size: 1.5rem;
   font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
-.subtitle {
-  font-size: 1.1rem;
-  line-height: 1.5;
-  color: var(--muted-foreground);
-}
-
-.steps {
-  padding-left: 1.25rem;
-  line-height: 1.7;
+.tagline {
+  color: #57534e;
+  font-size: 1.05rem;
+  margin-bottom: 0.5rem;
 }
 
 .cta {
   display: inline-block;
-  background: var(--accent);
-  color: var(--accent-foreground);
+  background: #4338ca;
+  color: #ffffff;
   font-weight: 600;
-  padding: 0.75rem 1.75rem;
-  border-radius: 8px;
-  transition: opacity 0.15s ease;
+  padding: 0.75rem 2.25rem;
+  border-radius: 999px;
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
 .cta:hover {
-  opacity: 0.85;
-}
-
-@media (max-width: 600px) {
-  .page {
-    padding: 2.5rem 1.25rem;
-  }
-
-  .title {
-    font-size: 1.75rem;
-  }
+  opacity: 0.9;
+  transform: translateY(-1px);
 }
