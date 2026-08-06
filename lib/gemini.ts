@@ -534,9 +534,14 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
   // confirmation isn't mistaken for an answer to whatever comes next.
   composeAmendmentTextIfReady(entityType, knownFields);
   const lastAssistantText = [...params.history].reverse().find((m) => m.role === "assistant")?.text;
-  const stepBefore = lastAssistantText
-    ? stepForQuestion(lastAssistantText, entityType, knownFields)
-    : null;
+  // Falling back to the pending step matters: when the match failed, the
+  // model was told "CURRENT QUESTION: none — everything is collected" while a
+  // question was on screen, so a tapped chip answered nothing. Whatever the
+  // last message was, the step we are waiting on is never a worse guess than
+  // nothing.
+  const stepBefore =
+    (lastAssistantText ? stepForQuestion(lastAssistantText, entityType, knownFields) : null) ??
+    nextStep(entityType, knownFields, params.history);
 
   let recordedAny = false;
   let rejectedCurrentField = false;

@@ -343,3 +343,23 @@ test("a user who asks why gets the reason, without being told they weren't under
   assert.match(reply, /the whole point of the filing/);
   assert.match(reply, /What would you like the new name to be\?/);
 });
+
+// Reported from the live app with a screenshot: the Corp approval question
+// was asked, the user tapped "No shares issued yet", and the identical
+// question came back — no retry note, nothing recorded. The question is the
+// only multi-paragraph one in either plan (a line, then three numbered
+// options), and the matcher compared just the last paragraph, so it matched
+// nothing: the model was told there was no current question, and had no way
+// to know what the chip answered.
+test("stepForQuestion matches a question whose text spans several paragraphs", () => {
+  const approval = CORP_FIELD_PLAN.find((s) => s.kind === "field" && s.key === "approval")!;
+  const asked = questionFor(approval, {});
+  assert.ok(asked.includes("\n\n"), "the approval question should be multi-paragraph");
+
+  const found = stepForQuestion(asked, "corp", {});
+  assert.equal((found as { key?: string })?.key, "approval");
+
+  // And still matches with a note in front of it.
+  const withNote = stepForQuestion(`I didn't catch that. ${approval.why}\n\n${asked}`, "corp", {});
+  assert.equal((withNote as { key?: string })?.key, "approval");
+});

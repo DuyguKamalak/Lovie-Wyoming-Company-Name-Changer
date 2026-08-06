@@ -41,6 +41,14 @@ attach the wrong chips, or answer for the user.
 - **`nextStep(entityType, knownFields, history)`** — the entity type step,
   then the first step whose field is still missing, then the amendment-text
   read-back once there is a text that was never shown, then `null`.
+- **`stepForQuestion(assistantText, ...)`** — which question the user is
+  answering, matched against the *end* of the last message we sent (a reply
+  is an optional note followed by the question, and a question may itself run
+  to several paragraphs). **Reported from the live app**: matching only the
+  last paragraph never matched the Corp approval question — a line plus three
+  numbered options — so a tapped chip was offered to the model with "CURRENT
+  QUESTION: none", answered nothing, and the identical question came back.
+  When the match fails anyway, the pending step is used instead of nothing.
 - **`composeReply(step, outcome)`** — the reply, assembled in code: an
   optional one-line note about the previous answer (rejected value, or
   nothing recognised), followed by the current step's question, with that

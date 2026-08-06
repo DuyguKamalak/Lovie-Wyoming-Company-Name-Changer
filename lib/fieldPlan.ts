@@ -353,23 +353,31 @@ export function stepForQuestion(
   entityType: EntityType | null,
   knownFields: Record<string, string>
 ): Step | null {
-  // A reply may carry a retry note ahead of the question; the question is
-  // always the last paragraph.
-  const paragraphs = assistantText.trim().split("\n\n");
-  const question = paragraphs[paragraphs.length - 1].trim();
+  // Match on the *end* of the message rather than on a paragraph. A reply is
+  // an optional note followed by the question, and a question may itself run
+  // to several paragraphs — the Corp approval question is a line plus three
+  // numbered options. Comparing only the last paragraph matched that one
+  // against its option list and so matched nothing at all, which is how a
+  // tapped chip ended up answering a question the model was told didn't
+  // exist. Whitespace is collapsed so a re-wrapped copy still matches.
+  const haystack = collapse(assistantText);
+  const endsWithQuestion = (question: string) => haystack.endsWith(collapse(question));
 
-  if (knownFields.amendmentText) {
-    const readBackTail = readBackQuestion(knownFields.amendmentText).split("\n\n").slice(-1)[0].trim();
-    if (question === readBackTail) return READ_BACK_STEP;
+  if (knownFields.amendmentText && endsWithQuestion(readBackQuestion(knownFields.amendmentText))) {
+    return READ_BACK_STEP;
   }
-  if (question === ENTITY_TYPE_STEP.question) return ENTITY_TYPE_STEP;
+  if (endsWithQuestion(ENTITY_TYPE_STEP.question)) return ENTITY_TYPE_STEP;
 
   for (const step of [...LLC_FIELD_PLAN, ...CORP_FIELD_PLAN]) {
-    if (step.kind !== "field" || step.question !== question) continue;
+    if (step.kind !== "field" || !endsWithQuestion(step.question)) continue;
     // Both plans share the signer/contact questions; prefer the active
     // entity's copy so the key lookup is unambiguous either way.
     if (!entityType) return step;
     return planFor(entityType).find((s) => s.kind === "field" && s.key === step.key) ?? step;
   }
   return null;
+}
+
+function collapse(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
