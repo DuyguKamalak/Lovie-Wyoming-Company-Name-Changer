@@ -148,16 +148,35 @@ export default function ChatPage() {
   );
 }
 
+// Solid brand-green, not the assistant avatar's light green tint — the
+// user's own bubble is already solid brand-green, so the avatar matches it
+// rather than the muted assistant style. Plain icon, not a photo: there's
+// no user account/profile picture in this app (constitution III, no
+// accounts), so a generic person glyph is the honest representation.
+function UserAvatar() {
+  return (
+    <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-brand-green text-brand-black">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="12" cy="8" r="4" fill="currentColor" />
+        <path d="M4 20c0-4.418 3.582-8 8-8s8 3.582 8 8" fill="currentColor" />
+      </svg>
+    </div>
+  );
+}
+
 function ChatBubble({ message }: { message: ChatMessage }) {
   if (message.role === "user") {
     return (
       <motion.div
-        className="max-w-[80%] self-end whitespace-pre-wrap rounded-2xl bg-brand-green px-4 py-2.5 leading-relaxed text-brand-black"
+        className="flex max-w-[80%] items-start gap-2 self-end"
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2 }}
       >
-        {message.text}
+        <div className="whitespace-pre-wrap rounded-2xl bg-brand-green px-4 py-2.5 leading-relaxed text-brand-black">
+          {message.text}
+        </div>
+        <UserAvatar />
       </motion.div>
     );
   }
