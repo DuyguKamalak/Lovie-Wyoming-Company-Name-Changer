@@ -15,49 +15,49 @@ or Corporation — see spec.md §5), and nothing else. It does not give legal
 advice, does not file anything, and does not remember anything beyond the
 current request (constitution §III/§V).
 
-## Flow control: the code decides what to ask, the model decides how
+## Flow control: the code asks, the model only listens
 
-Everything below used to be prose the model had to hold in its head *and*
-schedule for itself, and it scheduled badly. Live replays of both flows found
-it asking a Corp user for `dateOfOriginalFiling` (an LLC-only field), asking
-the same question three turns in a row after the user had already answered,
-and filling fields it never asked about with plausible inventions
-(`email: "jane.doe@example.com"`, `amendmentDate` set to the example date
-from its own previous message). None of those are "the model needs a firmer
-instruction" problems — every past attempt to fix them appended another
-paragraph to the system prompt, which is how the prompt reached 13 competing
-rules. The order of questions is a deterministic function of the entity type
-and what's already collected, so it belongs in code.
+The agent used to schedule its own questions from prose, and then — after
+that moved into code — still phrased them itself. Each step of that
+retreat removed a class of bug and left a smaller one behind, always of the
+same shape: whatever the model was still free to decide, it eventually
+decided wrong. A Corp user asked for an LLC-only field. The same question
+three turns running. An email recorded for a question never asked. A title
+question shipped under the three approval chips, because the model recorded
+a field and moved on mid-round. A user typing a name into the title
+question, and "President" — the example from our own prompt — recorded as
+their title.
 
-`lib/fieldPlan.ts` owns it:
+So the model no longer writes anything the user reads. **Both the order and
+the exact wording of every question live in `lib/fieldPlan.ts`**, and the
+model's only job is to read the user's answer and call `record_field`.
+There is no turn in which it can invent a question, skip one, reorder them,
+attach the wrong chips, or answer for the user.
 
-- **`LLC_FIELD_PLAN` / `CORP_FIELD_PLAN`** — the ordered list of steps for
-  each form, each with the `record_field` key, a one-line description for
-  the model, the required format, and (where the answers are enumerable)
-  the quick-reply chips.
-- **`nextStep(entityType, knownFields, history)`** — the entity type step if
-  it isn't known yet; otherwise the first plan step whose field is still
-  missing; the amendment-text read-back step once that text exists but has
-  never been shown; `null` when everything is collected.
-- Each turn, `lib/gemini.ts` injects that single step into the system
-  instruction as a `CURRENT STEP` block. The model phrases the question in
-  its own words — it never picks which question.
+- **`LLC_FIELD_PLAN` / `CORP_FIELD_PLAN`** — the ordered steps for each form.
+  Each carries its `record_field` key, the **verbatim question text** shown
+  to the user (examples included in that text, so an example can never be
+  invented), the required format, and any chips.
+- **`nextStep(entityType, knownFields, history)`** — the entity type step,
+  then the first step whose field is still missing, then the amendment-text
+  read-back once there is a text that was never shown, then `null`.
+- **`composeReply(step, outcome)`** — the reply, assembled in code: an
+  optional one-line note about the previous answer (rejected value, or
+  nothing recognised), followed by the current step's question, with that
+  step's chips. Text and chips come from the same object, so they cannot
+  disagree.
+- **`lib/gemini.ts`** runs the model once per turn with an extraction-only
+  instruction and a single tool pair (`set_entity_type`, `record_field`).
+  Any user-facing text it produces is discarded.
+- `suggest_replies` and `mark_ready_for_review` are gone. Chips come from the
+  step; readiness is `nextStep(...) === null`. Neither was ever a judgment
+  the model was better placed to make than the code.
 
-Consequences, by design:
-
-- A field that isn't on the active entity's form can't be asked about, and
-  an already-collected field can't be re-asked: the step is computed from
-  `knownFields`, not from the model's memory of the conversation.
-- The user is still free to volunteer several fields in one message. Every
-  one of them gets recorded (rule 12) and the next turn's step simply skips
-  ahead — the plan constrains what is *asked*, not what is *accepted*.
-- Chips for enumerable steps (entity type, the Corp approval question, the
-  read-back confirmation) come from the plan, not from the model
-  remembering to call `suggest_replies` — see rule 11.
-- `mark_ready_for_review` is rejected as a tool error while any step
-  remains, and the turn's text is discarded with it, so the model composes
-  its next question with the corrected state instead of announcing a
-  completion that didn't happen.
+What this costs, deliberately: the assistant no longer rephrases, and it
+can't answer an off-topic aside in its own words — an unrecognised message
+gets a fixed "I didn't catch that" line and the same question again. The
+intake reads as a chat-shaped wizard rather than a conversation. Given a
+document the state acts on, stable wording is worth more than fluency.
 
 ## Rules (non-negotiable)
 
@@ -320,101 +320,49 @@ explicit enum, the model invented plausible-looking but wrong key names
 review screen and PDF fill. The enum above is authoritative — it must stay
 in sync with `lib/types.ts`.
 
-### `flag_invalid_name`
-```json
-{ "name": "flag_invalid_name",
-  "description": "Flag that the proposed new company name is missing a valid entity designator, instead of silently accepting or auto-correcting it.",
-  "parameters": {
-    "type": "object",
-    "properties": { "reason": { "type": "string" } },
-    "required": ["reason"]
-  }
-}
-```
+### Removed: `flag_invalid_name`, `suggest_replies`, `mark_ready_for_review`
 
-### `suggest_replies`
-```json
-{ "name": "suggest_replies",
-  "description": "Offer 2-4 short tappable-chip options for the question you just asked, when it has natural discrete answers (e.g. entity type, the Corp approval question). Skip for open-ended questions (names, dates, free text).",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "options": {
-        "type": "array",
-        "items": { "type": "string" },
-        "minItems": 2,
-        "maxItems": 4
-      }
-    },
-    "required": ["options"]
-  }
-}
-```
-Added in response to user feedback wanting example/quick-reply answers
-shown as hints. Purely a UI affordance — calling it (or not) never
-changes `knownFields`; the client just renders the options as buttons
-that, when tapped, send that exact text as the user's next message.
+All three asked the model for a judgment the code was already in a position
+to make, and each one eventually got it wrong in production:
 
-### `mark_ready_for_review`
-```json
-{ "name": "mark_ready_for_review",
-  "description": "Signal that every required field for the selected entity type is present and valid, and the composed amendment text has been confirmed with the user.",
-  "parameters": { "type": "object", "properties": {} }
-}
-```
-Only call this once — it moves the user out of chat and into the review
-screen (spec.md §4).
+- **`flag_invalid_name`** — `record_field` refuses a name without a valid
+  designator, and a name whose designator the user never said (rule 15). The
+  refusal produces the step's own retry note, so a flag adds nothing.
+- **`suggest_replies`** — chips ship with the question they belong to. This
+  tool produced chips for open-ended questions (two invented names under
+  "who's signing?"), and, when the model recorded a field and moved on
+  mid-round, chips for a question the user had already answered.
+- **`mark_ready_for_review`** — readiness is `nextStep(...) === null`. The
+  model called it with fields still missing and with the amendment text
+  never shown, which is why it needed a veto in the first place.
 
 ## System prompt (used verbatim in `lib/gemini.ts`)
 
 ```
-You are the intake assistant for a free tool that prepares — but does not
-file — a Wyoming Secretary of State company name-change amendment. You are
-not a lawyer and must never give legal advice.
+You extract structured data from one message in an intake conversation for
+a Wyoming Secretary of State company name-change amendment. You never write
+anything the user reads — the application composes every question and every
+reply itself, and any text you produce is discarded.
 
-Your job is to collect, through natural conversation, exactly the
-information needed to fill one of two official amendment forms (LLC or
-C-Corporation). You do not decide what to ask next. Every turn, a CURRENT
-STEP block below names the one thing to ask about — ask exactly that, in
-your own words, one question per message, and never announce a step that
-isn't the current one.
+Your only job each turn: read the user's latest message and call the tools.
 
-Call set_entity_type as soon as you know the entity type. Call record_field
-for every field value the user states — including fields the current step
-didn't ask about, when the user volunteers them in the same message. A
-phrase like "also the contact person" refers back to a name given earlier
-in that same message and still needs its own record_field call.
+Call set_entity_type as soon as the user makes clear whether the company is
+an LLC or a Corporation. Call record_field once for every field value their
+message actually states — including fields the current question didn't ask
+about, when they volunteer them. A phrase like "also the contact person"
+refers back to a name given earlier in that same message and still needs its
+own record_field call. "Same" or "same as above" means the value already
+recorded for the field it refers to; record that value, not the word.
 
-Never record a value the user didn't actually give you. If they haven't
-answered yet, ask — don't fill the gap with an example, a placeholder, or
-today's date. Your own suggested example is not the user's answer.
-record_field rejects values it can't verify and tells you why; when that
-happens, explain the problem to the user plainly and ask again. Never
-resubmit the same value, and never supply the part they left out.
+Never record a value the user didn't give you. If their message doesn't
+answer the current question, record nothing — the application will ask
+again. Never fill a gap with an example, a placeholder, today's date, or a
+value from the question text. record_field rejects what it can't verify and
+tells you why; don't resubmit the same value, and never supply the part the
+user left out.
 
-The amendment text is composed for you from the article number and new
-name, and read back for confirmation as its own step. Don't rewrite it, and
-never treat a "yes" to one question as the answer to a different one — the
-Corp approval question in particular is a three-way legal choice with its
-own step.
-
-If the new name doesn't end in a recognized entity designator, call
-flag_invalid_name and ask the user to confirm or fix it — never add or
-remove a designator yourself.
-
-Never ask about share reclassification details or SOS filing/registration
-ID numbers — they're not part of these forms.
-
-When your question has 2-4 obvious discrete answers and the current step
-didn't already come with chips, call suggest_replies with them.
-
-Call mark_ready_for_review only when the CURRENT STEP block says everything
-is collected; it is rejected otherwise.
-
-If asked anything outside this scope (legal advice, tax implications,
-whether they should do this at all), say briefly that you can't advise on
-that and that a lawyer or accountant is the right resource, then continue
-the intake.
+The question the user is answering is shown to you as CURRENT QUESTION. Use
+it to resolve what their answer refers to — nothing more.
 ```
 
 ## Example exchange (illustrative, not exhaustive)

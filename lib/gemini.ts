@@ -20,7 +20,14 @@ import {
 } from "./validation";
 import { composeAmendmentText } from "./composeAmendment";
 import { valueCameFromUser } from "./provenance";
-import { nextStep, renderDirective, type Step } from "./fieldPlan";
+import {
+  DONE_REPLY,
+  composeReply,
+  nextStep,
+  renderExtractionContext,
+  stepForQuestion,
+  type Step,
+} from "./fieldPlan";
 
 // Everything here implements .specify/specs/001-wyoming-name-change/agent.md
 // exactly — that file is the source of truth for the four tools and the
@@ -188,53 +195,12 @@ const recordFieldDeclaration: FunctionDeclaration = {
   },
 };
 
-const flagInvalidNameDeclaration: FunctionDeclaration = {
-  name: "flag_invalid_name",
-  description:
-    "Flag that the proposed new company name is missing a valid entity designator, instead of silently accepting or auto-correcting it.",
-  parametersJsonSchema: {
-    type: "object",
-    properties: { reason: { type: "string" } },
-    required: ["reason"],
-  },
-};
-
-const suggestRepliesDeclaration: FunctionDeclaration = {
-  name: "suggest_replies",
-  description:
-    "Offer 2-4 short tappable-chip options for the question you just asked, when it has natural discrete answers (e.g. entity type, the Corp approval question). Skip for open-ended questions (names, dates, free text).",
-  parametersJsonSchema: {
-    type: "object",
-    properties: {
-      options: {
-        type: "array",
-        items: { type: "string" },
-        minItems: 2,
-        maxItems: 4,
-      },
-    },
-    required: ["options"],
-  },
-};
-
-const markReadyDeclaration: FunctionDeclaration = {
-  name: "mark_ready_for_review",
-  description:
-    "Signal that every required field for the selected entity type is present and valid, and the composed amendment text has been confirmed with the user.",
-  parametersJsonSchema: { type: "object", properties: {} },
-};
-
-const TOOLS = [
-  {
-    functionDeclarations: [
-      setEntityTypeDeclaration,
-      recordFieldDeclaration,
-      flagInvalidNameDeclaration,
-      suggestRepliesDeclaration,
-      markReadyDeclaration,
-    ],
-  },
-];
+// Two tools, both write-only into knownFields. suggest_replies and
+// mark_ready_for_review are gone: chips ship with the question they belong
+// to, and readiness is nextStep(...) === null — neither was ever a judgment
+// the model was better placed to make than the code. flag_invalid_name went
+// with them; record_field already refuses a name without a valid designator.
+const TOOLS = [{ functionDeclarations: [setEntityTypeDeclaration, recordFieldDeclaration] }];
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -255,14 +221,6 @@ export interface RunIntakeAgentResult {
   suggestedReplies: string[] | null;
 }
 
-function renderStateSummary(entityType: EntityType | null, knownFields: Record<string, string>): string {
-  const fieldLines = Object.entries(knownFields);
-  const fieldsBlock =
-    fieldLines.length > 0
-      ? `Known fields:\n${fieldLines.map(([k, v]) => `- ${k}: ${v}`).join("\n")}`
-      : "Known fields: none yet.";
-  return `entityType: ${entityType ?? "unknown"}\n${fieldsBlock}`;
-}
 
 interface ToolContext {
   knownFields: Record<string, string>;
@@ -450,12 +408,6 @@ function executeTool(
       ctx.knownFields[field] = value;
       return { ok: true };
     }
-    case "flag_invalid_name":
-      return { ok: true };
-    case "suggest_replies":
-      return { ok: true };
-    case "mark_ready_for_review":
-      return { ok: true };
     default:
       return { ok: false, error: `unknown tool: ${name}` };
   }
@@ -557,9 +509,6 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
   if (!knownFields.signatureDate || knownFields.signatureDate.trim() === "") {
     knownFields.signatureDate = getTodayFormatted();
   }
-  let readyForReview = false;
-  let suggestedReplies: string[] | null = null;
-
   const contents: Content[] = params.history.map((m) => ({
     role: m.role === "user" ? "user" : "model",
     parts: [{ text: m.text }],
@@ -574,22 +523,24 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     .map((m) => m.text)
     .join("\n");
 
-  let reply = "";
-  // The step the reply being shipped was composed for — its chips are the
-  // ones that belong with that reply. Recomputed every round, because a
-  // record_field this round can advance the step mid-turn.
-  let stepAtReply: Step | null = null;
+  // The step the user's message is answering — read off the last question we
+  // actually asked, not inferred from the fields, so the read-back
+  // confirmation isn't mistaken for an answer to whatever comes next.
+  composeAmendmentTextIfReady(entityType, knownFields);
+  const lastAssistantText = [...params.history].reverse().find((m) => m.role === "assistant")?.text;
+  const stepBefore = lastAssistantText
+    ? stepForQuestion(lastAssistantText, entityType, knownFields)
+    : null;
+
+  let recordedAny = false;
+  let rejectedCurrentField = false;
+
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-    // Compose before choosing the step: the read-back step only exists once
-    // there's a text to read back (agent.md rule 6).
-    composeAmendmentTextIfReady(entityType, knownFields);
-    const step = nextStep(entityType, knownFields, params.history);
-    stepAtReply = step;
-    let markReadyRejected = false;
-    const systemInstruction = `${SYSTEM_PROMPT}\n\nCurrent state (do not re-ask what's already known here):\n${renderStateSummary(
+    const systemInstruction = `${SYSTEM_PROMPT}\n\n${renderExtractionContext(
+      stepBefore,
       entityType,
       knownFields
-    )}\n\n${renderDirective(step, knownFields)}`;
+    )}`;
 
     const response = await generateWithFailover({
       model,
@@ -598,112 +549,80 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     });
 
     const calls = response.functionCalls ?? [];
-    const text = response.text ?? "";
+    // Any user-facing text is discarded by design (agent.md "Flow control"):
+    // the reply is composed below, from the plan.
+    if (calls.length === 0) break;
 
-    // suggest_replies is itself a function call, so a naive "calls.length
-    // === 0 means done" loop discarded this turn's text whenever the two
-    // arrived together, and the loop then paired a *later* round's question
-    // with the earlier round's chips ("what's the legal name?" + Yes/No).
-    // The fix for that was to break as soon as any text arrives — but
-    // scoping the chips to that same single round threw them away in the
-    // common case instead: the model very often calls record_field and
-    // suggest_replies in one tool-only round and writes its question in the
-    // *next* one (verified against the live API — the Corp approval
-    // question does exactly this), so `suggestedReplies` came back null on
-    // every single turn and the chips never reached the UI at all.
-    // Everything in this loop belongs to one user-facing reply, and we stop
-    // at the first text we see, so chips collected during this turn are
-    // always chips for that reply — just don't let them survive the turn.
     const results = calls.map((call) => {
       const name = call.name ?? "";
-      if (name === "mark_ready_for_review") {
-        // Reproduced repeatedly: the model announces "everything's ready!"
-        // while a field is missing or the amendment text was never shown.
-        // Handing the reason back as a tool error — and discarding the
-        // turn's text with it, below — lets the model ask the right question
-        // in its own voice, instead of code overwriting its reply.
-        const blocker = markReadyBlocker(entityType, knownFields, params.history);
-        if (blocker) {
-          markReadyRejected = true;
-          return { ok: false, error: blocker };
-        }
-        readyForReview = true;
-        return { ok: true };
-      }
-      if (name === "suggest_replies") {
-        const options = call.args?.options;
-        if (Array.isArray(options)) {
-          suggestedReplies = options.filter((o): o is string => typeof o === "string");
-        }
-      }
-      return executeTool(name, call.args ?? {}, {
+      const result = executeTool(name, call.args ?? {}, {
         knownFields,
         setEntityType: (e) => (entityType = e),
         getEntityType: () => entityType,
         userText,
       });
+      if (result.ok) {
+        recordedAny = true;
+      } else if (
+        name === "record_field" &&
+        stepBefore?.kind === "field" &&
+        call.args?.field === stepBefore.key
+      ) {
+        // Only a refusal on the field we actually asked about should change
+        // what the user is told — a stray record_field for something else
+        // failing isn't their problem.
+        rejectedCurrentField = true;
+      }
+      return result;
     });
 
-    // A rejected mark_ready_for_review takes this round's text with it: that
-    // text says the intake is finished, which is exactly what was just
-    // refused. Feed the rejection back and let the model compose the real
-    // next question instead.
-    if (text && !markReadyRejected) {
-      reply = text;
-      break;
-    }
-
-    // No usable user-facing text yet this turn — a tool-calling round that
-    // needs its results fed back before the model can compose its actual
-    // reply. Push the model's own response content back verbatim (not a
-    // hand-built { functionCall: {name, args} } object) — newer models
-    // attach a thoughtSignature to each function-call part that must be
-    // echoed back unmodified on the next turn, or the API rejects the
-    // request with INVALID_ARGUMENT.
+    // Feed the results back so a refused value can be corrected in the same
+    // turn. Push the model's own content verbatim — newer models attach a
+    // thoughtSignature to each function-call part that must be echoed back
+    // unmodified, or the API rejects the next request with INVALID_ARGUMENT.
     const candidateContent = response.candidates?.[0]?.content;
-    if (candidateContent) {
-      contents.push(candidateContent);
-    } else {
-      contents.push({
+    contents.push(
+      candidateContent ?? {
         role: "model",
         parts: calls.map((call) => ({ functionCall: { name: call.name, args: call.args } })),
-      });
-    }
-
-    const responseParts = calls.map((call, idx) => ({
-      functionResponse: { name: call.name ?? "", response: results[idx] },
-    }));
-    contents.push({ role: "user", parts: responseParts });
+      }
+    );
+    contents.push({
+      role: "user",
+      parts: calls.map((call, idx) => ({
+        functionResponse: { name: call.name ?? "", response: results[idx] },
+      })),
+    });
   }
 
-  // The compose step ran inside the loop (before each step was chosen), but
-  // run it once more here: a record_field in the final round can complete
-  // the newName/articleNumber pair the text is derived from.
+  // A record_field this turn can complete the newName/articleNumber pair the
+  // amendment text is derived from.
   composeAmendmentTextIfReady(entityType, knownFields);
+  const step = nextStep(entityType, knownFields, params.history);
 
-  // The loop can run out of iterations on a pure tool-calling streak and
-  // leave `reply` empty — which the client renders as an empty assistant
-  // bubble (and, if mark_ready_for_review was among those calls, silently
-  // navigates away behind). Say something rather than nothing.
-  if (!reply) {
-    reply = "Sorry — I lost the thread there. Could you say that again?";
+  if (!step) {
+    return {
+      reply: DONE_REPLY,
+      entityType,
+      knownFields,
+      readyForReview: true,
+      suggestedReplies: null,
+    };
   }
 
-  // Plan chips beat model chips: the steps whose options actually matter
-  // (entity type, Corp approval, the read-back confirmation) carry theirs in
-  // the field plan precisely so they don't depend on the model remembering
-  // to call suggest_replies. Its chips are still used for the ad-hoc
-  // enumerable question the plan doesn't know about.
-  const chips = stepAtReply?.kind === "field" ? stepAtReply.chips : stepAtReply?.chips;
+  const sameStep = stepKey(stepBefore) === stepKey(step);
+  const { reply, suggestedReplies } = composeReply(step, knownFields, {
+    rejected: rejectedCurrentField && sameStep,
+    recordedNothing: !recordedAny,
+    sameStep,
+  });
 
-  return {
-    ...reconcileReadyForReview(entityType, knownFields, readyForReview, reply, {
-      history: params.history,
-      suggestedReplies: chips ?? suggestedReplies,
-    }),
-    entityType,
-    knownFields,
-  };
+  return { reply, entityType, knownFields, readyForReview: false, suggestedReplies };
+}
+
+function stepKey(step: Step | null): string {
+  if (!step) return "done";
+  return step.kind === "field" ? `field:${step.key}` : step.kind;
 }
 
 // agent.md rule 6: amendmentText is fully determined by entity type +
@@ -726,84 +645,3 @@ function composeAmendmentTextIfReady(
   );
 }
 
-// Don't trust mark_ready_for_review at face value: found via direct
-// testing that the model can call it (and even say the right thing in its
-// reply) while having silently skipped record_field for one or more
-// mentioned fields in a dense, multi-fact message — signerName,
-// contactPerson, phone, and email all went unset in one real run despite
-// being spelled out in the user's message. /api/generate-pdf already has
-// its own missingFields check, but catching it here means the user finds
-// out in the conversation instead of after clicking Download. Extracted
-// as a pure function so this reconciliation logic is unit-testable without
-// a real API call.
-//
-// Asks about only the FIRST missing field, not the whole list at once:
-// dumping every missing field into one message ("signer name, contact
-// person, phone, email...") broke agent.md rule 3 (one question at a time)
-// and read as jarringly different from the rest of the conversation, which
-// the model had been asking one field per turn. If more than one field is
-// still missing, the next turn's reconciliation asks about the next one —
-// same as if the model itself had asked them one by one.
-//
-// Plain "What's the X?" phrasing, no "Almost done" preamble: found via real
-// user testing that when several fields are missing in a row, this
-// reconciliation fires on every single turn, so "Almost done — one more
-// thing..." ends up repeated four times back to back — reads as robotic,
-// and it isn't even true the first three times. The rest of the
-// conversation just asks its questions plainly; this should match.
-// Last-resort veto only. The tool loop already refuses
-// mark_ready_for_review while any step remains (see markReadyBlocker), so
-// this now fires only when the loop runs out of iterations mid-repair. It
-// asks with the field plan's own deterministic wording rather than a
-// humanized key name — reproduced in testing that the old version asked
-// "What's the approval?", a bare key name standing in for a three-way legal
-// choice with none of the three options offered.
-export function reconcileReadyForReview(
-  entityType: EntityType | null,
-  knownFields: Record<string, string>,
-  readyForReview: boolean,
-  reply: string,
-  options?: { history?: ChatMessage[]; suggestedReplies?: string[] | null }
-): { readyForReview: boolean; reply: string; suggestedReplies: string[] | null } {
-  const suggestedReplies = options?.suggestedReplies ?? null;
-  if (!readyForReview || !entityType) {
-    return { readyForReview, reply, suggestedReplies };
-  }
-
-  const step = nextStep(entityType, knownFields, options?.history);
-  if (!step) {
-    return { readyForReview, reply, suggestedReplies };
-  }
-  // Whatever chips the model offered belonged to the reply we're about to
-  // throw away — shipping them with a different question is the stale-chip
-  // bug the tool loop documents. The step brings its own.
-  return {
-    readyForReview: false,
-    reply: step.kind === "readBack" ? readBackRequest(knownFields.amendmentText) : step.askText,
-    suggestedReplies: step.chips ?? null,
-  };
-}
-
-export function readBackRequest(amendmentText: string): string {
-  return `Before the review screen, here's the exact text that gets printed on the form:\n\n"${amendmentText}"\n\nIs that word-for-word what you want to file?`;
-}
-
-// Why mark_ready_for_review can't be honored yet, or null when it can.
-// Returned to the model as the tool's own error result so it repairs the
-// turn itself instead of announcing a completion that didn't happen.
-export function markReadyBlocker(
-  entityType: EntityType | null,
-  knownFields: Record<string, string>,
-  history: ChatMessage[]
-): string | null {
-  if (!entityType) return "cannot mark ready: the entity type isn't set yet — call set_entity_type first";
-  const step = nextStep(entityType, knownFields, history);
-  if (!step) return null;
-  if (step.kind === "readBack") {
-    return "cannot mark ready: the amendment text has never been read back to the user — show it verbatim and ask them to confirm it first";
-  }
-  if (step.kind === "entityType") {
-    return "cannot mark ready: the entity type isn't set yet — call set_entity_type first";
-  }
-  return `cannot mark ready: ${step.key} is still missing — ask the user for it (${step.whatItIs})`;
-}
