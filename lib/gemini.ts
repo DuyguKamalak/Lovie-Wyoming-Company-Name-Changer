@@ -42,13 +42,33 @@ export function getApiKeys(): string[] {
   return keys;
 }
 
-// A 4xx (bad request, invalid key, content-policy rejection) will fail
-// identically on retry — no point looping on those. No status at all
-// (thrown before an HTTP response ever came back, e.g. a network-level
-// failure) or a 5xx (Gemini's own server error) are the two shapes worth
-// one retry.
+// A 4xx (bad request, content-policy rejection) will fail identically on
+// retry — no point looping on those. No status at all (thrown before an
+// HTTP response ever came back, e.g. a network-level failure) or a 5xx
+// (Gemini's own server error) are the two shapes worth one retry.
 export function isTransientError(status: number | undefined): boolean {
   return status === undefined || (status >= 500 && status < 600);
+}
+
+// Failures that are about *this key* rather than about the request, so a
+// different key stands a real chance of succeeding:
+//   429 — quota/rate limit exhausted on this key's project
+//   403 — project denied/restricted (e.g. AI Studio wants billing enabled)
+//   401 — key rejected outright
+// Found the hard way from a real production 500: the primary key hit its
+// per-minute rate limit (429), the code switched to the configured
+// fallback key, and that key's Google project turned out to be restricted
+// — returning 403 on every single call. 403 wasn't in the failover set, so
+// it was thrown immediately and surfaced as "The assistant failed to
+// respond", even though the *first* key would have recovered seconds
+// later. Treating all three the same way means one broken key can no
+// longer take the whole chat down.
+export function isKeyLevelFailure(status: number | undefined): boolean {
+  return status === 429 || status === 403 || status === 401;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const setEntityTypeDeclaration: FunctionDeclaration = {
@@ -309,22 +329,91 @@ function executeTool(
 
 const MAX_TOOL_ITERATIONS = 6;
 
+// The free tier's binding constraint is requests-per-*minute*, not
+// requests-per-day: the project's dashboard showed 17/15 RPM peak against
+// only 115/500 RPD. Because one user message can fan out into several
+// generateContent calls (the tool loop below), a normal-paced conversation
+// can brush that per-minute ceiling. RPM is a rolling window, so a short
+// wait genuinely clears it — unlike a daily quota, where waiting is
+// pointless. One brief pause is worth it before failing the whole turn.
+const RATE_LIMIT_BACKOFF_MS = 2500;
+
 // Stateless by design (plan.md section 3/6): the caller resends the full
 // history + knownFields every request; this function has no memory beyond
 // its own arguments and never persists anything server-side.
 export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunIntakeAgentResult> {
   const apiKeys = getApiKeys();
-  // Advances forward-only within a single request: once a key is exhausted
-  // (429) this turn, there's no reason to keep re-trying it on every
-  // remaining tool-call iteration of the same request — stick with
-  // whichever key last worked. A fresh HTTP request (the next chat turn)
-  // starts back at index 0 by design; this function is stateless (plan.md
-  // section 3/6) and has nowhere to remember "key 0 was dead" between
-  // requests, so the cost is at most one extra failed call per turn on a
-  // day the primary key is out of quota — acceptable for a free-tier app.
+  // Which key the *next* call starts from. Sticky within one request: once
+  // a key works, keep using it for the remaining tool-loop iterations
+  // rather than starting the failover dance from scratch each time. A
+  // fresh HTTP request starts back at index 0 by design — this function is
+  // stateless (plan.md section 3/6) and has nowhere to remember a dead key
+  // between requests.
   let keyIndex = 0;
-  let ai = new GoogleGenAI({ apiKey: apiKeys[keyIndex] });
   const model = process.env.GEMINI_MODEL || DEFAULT_MODEL;
+
+  // Tries every configured key before giving up, then — if every key was
+  // merely rate-limited rather than broken — waits out the rolling RPM
+  // window once and tries the whole set again.
+  async function generateWithFailover(
+    request: Parameters<GoogleGenAI["models"]["generateContent"]>[0]
+  ) {
+    let firstKeyLevelError: unknown = null;
+    let sawRateLimit = false;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // Start from the key that last worked, then walk the rest.
+      for (let offset = 0; offset < apiKeys.length; offset++) {
+        const idx = (keyIndex + offset) % apiKeys.length;
+        const ai = new GoogleGenAI({ apiKey: apiKeys[idx] });
+        let transientRetried = false;
+
+        for (;;) {
+          try {
+            const response = await ai.models.generateContent(request);
+            keyIndex = idx; // this key works — prefer it for the next call
+            return response;
+          } catch (error) {
+            const status = (error as { status?: number })?.status;
+
+            // A network blip or a 5xx from Gemini itself: same key, one
+            // immediate retry, since nothing about the key or the request
+            // is actually wrong.
+            if (isTransientError(status) && !transientRetried) {
+              transientRetried = true;
+              continue;
+            }
+            // This key can't serve the request (rate limited, restricted,
+            // or rejected) — remember it and let the loop try the next key.
+            if (isKeyLevelFailure(status)) {
+              if (status === 429) sawRateLimit = true;
+              // Prefer reporting a 429 over a 403: "we're rate limited,
+              // try again in a moment" is actionable for the user, whereas
+              // a misconfigured spare key's 403 is not their problem.
+              if (
+                firstKeyLevelError === null ||
+                (status === 429 &&
+                  (firstKeyLevelError as { status?: number })?.status !== 429)
+              ) {
+                firstKeyLevelError = error;
+              }
+              break;
+            }
+            // Anything else (400 bad request, content policy, …) is about
+            // the request itself — another key would fail identically.
+            throw error;
+          }
+        }
+      }
+
+      // Every key failed. Only a rate limit is worth waiting out; if the
+      // keys are restricted/invalid, a pause changes nothing.
+      if (!sawRateLimit || attempt === 1) break;
+      await sleep(RATE_LIMIT_BACKOFF_MS);
+    }
+
+    throw firstKeyLevelError;
+  }
 
   let entityType = params.entityType;
   const knownFields: Record<string, string> = { ...params.knownFields };
@@ -346,44 +435,11 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
   for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
     const systemInstruction = `${SYSTEM_PROMPT}\n\nCurrent state (do not re-ask what's already known here):\n${renderStateSummary(entityType, knownFields)}`;
 
-    let response: Awaited<ReturnType<typeof ai.models.generateContent>>;
-    let transientRetried = false;
-    for (;;) {
-      try {
-        response = await ai.models.generateContent({
-          model,
-          contents,
-          config: { systemInstruction, tools: TOOLS },
-        });
-        break;
-      } catch (error) {
-        const status = (error as { status?: number })?.status;
-        // Only a quota/rate-limit error justifies switching keys — any
-        // other failure (bad request, network, etc.) would fail identically
-        // on the fallback key too, so surface it immediately instead of
-        // masking it behind a pointless retry.
-        if (status === 429 && keyIndex < apiKeys.length - 1) {
-          keyIndex++;
-          ai = new GoogleGenAI({ apiKey: apiKeys[keyIndex] });
-          continue;
-        }
-        // Found via a real user report: a live request failed with a 500
-        // ("The assistant failed to respond") that didn't reproduce locally
-        // replaying the identical conversation — consistent with a one-off
-        // network blip or a transient error from Gemini's own servers
-        // between the serverless function and the API, not an actual bug
-        // in the request. Worth exactly one same-key retry for this class
-        // of error (no status at all — a network-level failure — or a 5xx
-        // from Gemini itself) before giving up; a real 4xx (bad request,
-        // invalid key) would fail identically on retry, so don't loop on
-        // those.
-        if (isTransientError(status) && !transientRetried) {
-          transientRetried = true;
-          continue;
-        }
-        throw error;
-      }
-    }
+    const response = await generateWithFailover({
+      model,
+      contents,
+      config: { systemInstruction, tools: TOOLS },
+    });
 
     const calls = response.functionCalls ?? [];
     const text = response.text ?? "";

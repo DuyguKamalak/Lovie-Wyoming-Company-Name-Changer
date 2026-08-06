@@ -6,6 +6,7 @@ import {
   isValidApprovalValue,
   getApiKeys,
   isTransientError,
+  isKeyLevelFailure,
 } from "../gemini";
 import { LLC_REQUIRED_KEYS, CORP_REQUIRED_KEYS } from "../validation";
 
@@ -165,4 +166,37 @@ test("isTransientError", () => {
   assert.equal(isTransientError(400), false); // bad request — retrying won't help
   assert.equal(isTransientError(401), false); // invalid key — retrying won't help
   assert.equal(isTransientError(404), false);
+});
+
+// Regression guard for the actual root cause of a real production 500,
+// diagnosed from the project's Gemini dashboard: the primary key hit its
+// per-minute rate limit (429 — the dashboard showed 17/15 RPM peak against
+// only 115/500 RPD, so the *minute* window was the binding constraint, not
+// the day), the code failed over to the configured spare key, and that
+// key's Google project turned out to be restricted ("set up billing to
+// continue") — returning 403 on every single call, verified 8/8. 403
+// wasn't treated as a key-level failure, so it was thrown straight through
+// as "The assistant failed to respond" instead of falling back to the key
+// that would have recovered moments later.
+test("isKeyLevelFailure covers every status that means 'this key can't serve the request'", () => {
+  assert.equal(isKeyLevelFailure(429), true); // rate limited / out of quota
+  assert.equal(isKeyLevelFailure(403), true); // project restricted or denied
+  assert.equal(isKeyLevelFailure(401), true); // key rejected
+  // Not key-level: another key would fail these identically.
+  assert.equal(isKeyLevelFailure(400), false); // malformed request
+  assert.equal(isKeyLevelFailure(404), false); // unknown model
+  assert.equal(isKeyLevelFailure(500), false); // Gemini server error (transient instead)
+  assert.equal(isKeyLevelFailure(undefined), false); // network blip (transient instead)
+});
+
+// The two classifiers must stay mutually exclusive: a status handled as
+// both would either double-retry or short-circuit the failover walk.
+test("transient and key-level failure classes never overlap", () => {
+  for (const status of [undefined, 400, 401, 403, 404, 429, 500, 502, 503]) {
+    assert.equal(
+      isTransientError(status) && isKeyLevelFailure(status),
+      false,
+      `status ${status} is classified as both transient and key-level`
+    );
+  }
 });

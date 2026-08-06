@@ -253,6 +253,49 @@ or a 5xx from Gemini — via `isTransientError`. A real 4xx (bad request,
 invalid key) still fails immediately, since retrying wouldn't change the
 outcome.
 
+### 9.1 Root cause of the production 500 (diagnosed, fixed)
+
+The transient-retry above treated a symptom. Reproducing the failure
+locally and reading the project's Gemini dashboard gave the real chain:
+
+1. **RPM, not RPD, is the binding free-tier limit.** The dashboard showed
+   a peak of **17/15 requests-per-minute** against only **115/500
+   requests-per-day**. Because one user message fans out into 1-2
+   `generateContent` calls (the tool loop), a single ~11-turn conversation
+   can nearly exhaust the *per-minute* budget on its own. Measured
+   end-to-end: a full LLC intake takes 11 turns.
+2. The primary key hit that per-minute limit → **429**.
+3. The code failed over to `GEMINI_API_KEY_FALLBACK` — whose Google
+   project turned out to be **restricted** ("set up billing to continue"),
+   returning **403 on every call** (verified 8/8 against the live API).
+4. 403 was not in the failover set, so it was thrown straight through and
+   surfaced to the user as a generic 500 "The assistant failed to
+   respond" — even though the primary key would have recovered seconds
+   later once the rolling minute window cleared.
+
+**Fixes**, all verified against the live API:
+- `isKeyLevelFailure` (429/403/401) — any of these means *this key* can't
+  serve the request, so `generateWithFailover` walks every configured key
+  instead of only switching on 429. Proven by putting the known-broken key
+  first: the request still succeeded in ~1.2s via the working key.
+- A single `RATE_LIMIT_BACKOFF_MS` (2.5s) pause and one full retry across
+  all keys when every key was merely *rate limited* — RPM is a rolling
+  window, so waiting genuinely clears it (unlike a daily quota).
+- Errors are ranked when reporting: a 429 is preferred over a 403, so the
+  user gets the actionable "temporarily busy, try again" rather than a
+  misconfigured spare key's permission error.
+- `/api/chat` maps 403/401 to a 503 with an honest "misconfigured on our
+  side" message plus a loud server-side log naming the env vars to check,
+  instead of the generic 500 that sent a real user in circles.
+- `export const maxDuration = 60` on `/api/chat`, since a rate-limited
+  turn can now legitimately take longer than the default serverless
+  timeout.
+
+**Operational note**: the spare key is only worth configuring if it is
+actually valid and unrestricted — a broken one is worse than none, since
+it burns a failover attempt. The code tolerates it either way now, but
+capacity only doubles with a genuinely working second key.
+
 ## 10. Pre-launch risk: form staleness
 
 This sandbox cannot reach `sos.wyo.gov` (network policy), so the vendored
