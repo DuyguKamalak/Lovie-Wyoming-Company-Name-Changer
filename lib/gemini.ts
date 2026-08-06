@@ -42,6 +42,15 @@ export function getApiKeys(): string[] {
   return keys;
 }
 
+// A 4xx (bad request, invalid key, content-policy rejection) will fail
+// identically on retry — no point looping on those. No status at all
+// (thrown before an HTTP response ever came back, e.g. a network-level
+// failure) or a 5xx (Gemini's own server error) are the two shapes worth
+// one retry.
+export function isTransientError(status: number | undefined): boolean {
+  return status === undefined || (status >= 500 && status < 600);
+}
+
 const setEntityTypeDeclaration: FunctionDeclaration = {
   name: "set_entity_type",
   description:
@@ -338,6 +347,7 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
     const systemInstruction = `${SYSTEM_PROMPT}\n\nCurrent state (do not re-ask what's already known here):\n${renderStateSummary(entityType, knownFields)}`;
 
     let response: Awaited<ReturnType<typeof ai.models.generateContent>>;
+    let transientRetried = false;
     for (;;) {
       try {
         response = await ai.models.generateContent({
@@ -355,6 +365,20 @@ export async function runIntakeAgent(params: RunIntakeAgentParams): Promise<RunI
         if (status === 429 && keyIndex < apiKeys.length - 1) {
           keyIndex++;
           ai = new GoogleGenAI({ apiKey: apiKeys[keyIndex] });
+          continue;
+        }
+        // Found via a real user report: a live request failed with a 500
+        // ("The assistant failed to respond") that didn't reproduce locally
+        // replaying the identical conversation — consistent with a one-off
+        // network blip or a transient error from Gemini's own servers
+        // between the serverless function and the API, not an actual bug
+        // in the request. Worth exactly one same-key retry for this class
+        // of error (no status at all — a network-level failure — or a 5xx
+        // from Gemini itself) before giving up; a real 4xx (bad request,
+        // invalid key) would fail identically on retry, so don't loop on
+        // those.
+        if (isTransientError(status) && !transientRetried) {
+          transientRetried = true;
           continue;
         }
         throw error;

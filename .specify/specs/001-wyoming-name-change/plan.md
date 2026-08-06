@@ -243,6 +243,16 @@ tradeoff — it just doubles the effective daily quota (~1,000 RPD across
 two free keys) for near-zero added complexity. Multi-provider fallback
 remains deferred until 1,000/day is demonstrated insufficient.
 
+**Second follow-up**: a live user report showed a `generateContent` call
+failing with a 500 that didn't reproduce locally replaying the identical
+conversation — consistent with a one-off network blip or a transient
+error from Gemini's own servers, not a bug in the request itself.
+`runIntakeAgent` now retries once (same key, no key switch) on this class
+of failure specifically — no HTTP status at all (a network-level failure)
+or a 5xx from Gemini — via `isTransientError`. A real 4xx (bad request,
+invalid key) still fails immediately, since retrying wouldn't change the
+outcome.
+
 ## 10. Pre-launch risk: form staleness
 
 This sandbox cannot reach `sos.wyo.gov` (network policy), so the vendored

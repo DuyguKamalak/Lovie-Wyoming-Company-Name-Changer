@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { RECORD_FIELD_KEYS, reconcileReadyForReview, isValidApprovalValue, getApiKeys } from "../gemini";
+import {
+  RECORD_FIELD_KEYS,
+  reconcileReadyForReview,
+  isValidApprovalValue,
+  getApiKeys,
+  isTransientError,
+} from "../gemini";
 import { LLC_REQUIRED_KEYS, CORP_REQUIRED_KEYS } from "../validation";
 
 const COMPLETE_LLC_FIELDS: Record<string, string> = {
@@ -142,4 +148,21 @@ test("getApiKeys", async (t) => {
     delete process.env.GEMINI_API_KEY_FALLBACK;
     assert.throws(() => getApiKeys(), /GEMINI_API_KEY is not set/);
   });
+});
+
+// Regression guard for a real user report: a live chat request failed with
+// a 500 that didn't reproduce locally replaying the identical
+// conversation — consistent with a one-off network blip or a transient
+// error from Gemini's own servers, not an actual bug in the request.
+// isTransientError decides which failures runIntakeAgent retries once
+// (same key) before giving up.
+test("isTransientError", () => {
+  assert.equal(isTransientError(undefined), true); // network-level failure, no HTTP response at all
+  assert.equal(isTransientError(500), true);
+  assert.equal(isTransientError(503), true);
+  assert.equal(isTransientError(599), true);
+  assert.equal(isTransientError(429), false); // handled separately by the key-fallback path
+  assert.equal(isTransientError(400), false); // bad request — retrying won't help
+  assert.equal(isTransientError(401), false); // invalid key — retrying won't help
+  assert.equal(isTransientError(404), false);
 });
