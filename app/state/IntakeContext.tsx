@@ -94,8 +94,18 @@ export function IntakeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // Guard on `hydrated`: without it, this fires on the very first mount
+    // with the untouched default state — before the hydration effect
+    // above has applied its dispatch — and clobbers sessionStorage with
+    // an empty state right as (or just before) the real saved data would
+    // have been restored. Found via direct testing: a hard navigation
+    // straight to /review reliably lost the "readyForReview" flag this
+    // way, bouncing back to /chat even though nothing was ever actually
+    // wrong with the saved data — the app destroyed it a moment after
+    // reading it correctly.
+    if (!hydrated) return;
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+  }, [state, hydrated]);
 
   return (
     <IntakeStateContext.Provider value={state}>

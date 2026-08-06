@@ -2,30 +2,37 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useIntakeDispatch, useIntakeState, startOver } from "../state/IntakeContext";
+import { useIntakeDispatch, useIntakeHydrated, useIntakeState, startOver } from "../state/IntakeContext";
 import { Disclaimer } from "../components/Disclaimer";
+import { BrandButton } from "../components/BrandButton";
 import { designatorWarning } from "@/lib/validation";
 import { CORP_APPROVAL_OPTIONS, fieldConfigFor } from "./fieldConfig";
 import { formatGenerateError } from "./formatGenerateError";
-import styles from "./review.module.css";
 
 export default function ReviewPage() {
   const state = useIntakeState();
   const dispatch = useIntakeDispatch();
+  const hydrated = useIntakeHydrated();
   const router = useRouter();
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Guard: only reachable after the chat agent has actually said
   // readyForReview (spec.md section 4) — don't let a direct /review visit
-  // through with nothing to show.
+  // through with nothing to show. Must wait for hydration first: a hard
+  // navigation/refresh straight to /review remounts IntakeProvider, and
+  // checking state before its async sessionStorage read finishes would
+  // see the not-yet-hydrated default state and bounce to /chat even when
+  // the real (persisted) state says readyForReview — a visible round
+  // trip, even though no data is actually lost (found via direct
+  // testing, not user-reported).
   useEffect(() => {
-    if (!state.entityType || !state.readyForReview) {
+    if (hydrated && (!state.entityType || !state.readyForReview)) {
       router.replace("/chat");
     }
-  }, [state.entityType, state.readyForReview, router]);
+  }, [hydrated, state.entityType, state.readyForReview, router]);
 
-  if (!state.entityType || !state.readyForReview) {
+  if (!hydrated || !state.entityType || !state.readyForReview) {
     return null;
   }
 
@@ -68,81 +75,82 @@ export default function ReviewPage() {
   }
 
   return (
-    <div className={styles.page}>
-      <h1 className={styles.title}>Review before you download</h1>
-      <p className={styles.subtitle}>
-        Every field below is exactly what will be printed on the official{" "}
-        {entityType === "llc" ? "LLC amendment" : "corporation amendment"} form.
-        Edit anything that isn&apos;t right.
-      </p>
+    <div className="min-h-screen w-full bg-white text-brand-black">
+      <div className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-5 py-10">
+        <h1 className="font-serif text-3xl font-normal">Review before you download</h1>
+        <p className="leading-relaxed text-[#57534e]">
+          Every field below is exactly what will be printed on the official{" "}
+          {entityType === "llc" ? "LLC amendment" : "corporation amendment"} form. Edit anything
+          that isn&apos;t right.
+        </p>
 
-      <div className={styles.fields}>
-        {fields.map((field) => (
-          <label key={field.key} className={styles.field}>
-            <span className={styles.label}>{field.label}</span>
-            {field.multiline ? (
-              <textarea
-                className={styles.textarea}
-                rows={3}
-                value={state.knownFields[field.key] ?? ""}
-                onChange={(e) => setField(field.key, e.target.value)}
-              />
-            ) : (
-              <input
-                className={styles.input}
-                type="text"
-                value={state.knownFields[field.key] ?? ""}
-                onChange={(e) => setField(field.key, e.target.value)}
-              />
-            )}
-            {field.help && <span className={styles.help}>{field.help}</span>}
-          </label>
-        ))}
-
-        {entityType === "corp" && (
-          <fieldset className={styles.field}>
-            <legend className={styles.label}>How was this amendment approved?</legend>
-            {CORP_APPROVAL_OPTIONS.map((option) => (
-              <label key={option.value} className={styles.radioOption}>
-                <input
-                  type="radio"
-                  name="approval"
-                  value={option.value}
-                  checked={state.knownFields.approval === option.value}
-                  onChange={() => setField("approval", option.value)}
+        <div className="flex flex-col gap-4">
+          {fields.map((field) => (
+            <label key={field.key} className="flex flex-col gap-1.5">
+              <span className="text-sm font-semibold">{field.label}</span>
+              {field.multiline ? (
+                <textarea
+                  className="resize-y rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 font-sans text-base text-brand-black outline-none focus:border-[#a5b4fc]"
+                  rows={3}
+                  value={state.knownFields[field.key] ?? ""}
+                  onChange={(e) => setField(field.key, e.target.value)}
                 />
-                {option.label}
-              </label>
-            ))}
-          </fieldset>
+              ) : (
+                <input
+                  className="rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-[#a5b4fc]"
+                  type="text"
+                  value={state.knownFields[field.key] ?? ""}
+                  onChange={(e) => setField(field.key, e.target.value)}
+                />
+              )}
+              {field.help && <span className="text-sm text-[#78716c]">{field.help}</span>}
+            </label>
+          ))}
+
+          {entityType === "corp" && (
+            <fieldset className="flex flex-col gap-1.5 border-none p-0">
+              <legend className="text-sm font-semibold">How was this amendment approved?</legend>
+              {CORP_APPROVAL_OPTIONS.map((option) => (
+                <label key={option.value} className="flex items-start gap-2 py-1 text-[0.95rem] leading-snug">
+                  <input
+                    type="radio"
+                    name="approval"
+                    value={option.value}
+                    checked={state.knownFields.approval === option.value}
+                    onChange={() => setField("approval", option.value)}
+                    className="mt-1"
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </fieldset>
+          )}
+        </div>
+
+        {warning && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {warning}
+          </p>
         )}
-      </div>
 
-      {warning && <p className={styles.warning}>{warning}</p>}
+        <Disclaimer />
 
-      <Disclaimer />
+        {error && <p className="text-sm text-red-600">{error}</p>}
 
-      {error && <p className={styles.error}>{error}</p>}
-
-      <div className={styles.actions}>
-        <button
-          type="button"
-          className={styles.secondaryButton}
-          onClick={() => {
-            startOver(dispatch);
-            router.push("/");
-          }}
-        >
-          Start over
-        </button>
-        <button
-          type="button"
-          className={styles.primaryButton}
-          onClick={handleDownload}
-          disabled={downloading}
-        >
-          {downloading ? "Generating…" : "Download PDF"}
-        </button>
+        <div className="flex justify-end gap-3">
+          <BrandButton
+            type="button"
+            onClick={() => {
+              startOver(dispatch);
+              router.push("/");
+            }}
+          >
+            Start over
+          </BrandButton>
+          <BrandButton type="button" onClick={handleDownload} disabled={downloading}>
+            {downloading ? "Generating…" : "Download PDF"}
+          </BrandButton>
+        </div>
       </div>
     </div>
   );

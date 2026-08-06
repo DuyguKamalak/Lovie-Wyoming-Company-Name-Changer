@@ -1,15 +1,17 @@
 "use client";
 
 import { motion } from "framer-motion";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LovieLogo } from "./components/LovieLogo";
-import styles from "./page.module.css";
+import { BrandButton } from "./components/BrandButton";
 
 export default function Home() {
+  const router = useRouter();
+
   return (
-    <div className={styles.page}>
+    <div className="flex min-h-screen w-full items-center justify-center bg-white text-brand-black">
       <motion.div
-        className={styles.content}
+        className="flex flex-col items-center gap-3 px-8 text-center"
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
@@ -23,7 +25,7 @@ export default function Home() {
         </motion.div>
 
         <motion.span
-          className={styles.wordmark}
+          className="font-serif text-2xl font-normal"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.4 }}
@@ -32,7 +34,7 @@ export default function Home() {
         </motion.span>
 
         <motion.p
-          className={styles.tagline}
+          className="mb-1 max-w-sm text-[1.05rem] text-[#555151]"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.5, delay: 0.55 }}
@@ -45,9 +47,9 @@ export default function Home() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.7 }}
         >
-          <Link href="/chat" className={styles.cta}>
+          <BrandButton className="rounded-full" onClick={() => router.push("/chat")}>
             Start
-          </Link>
+          </BrandButton>
         </motion.div>
       </motion.div>
     </div>

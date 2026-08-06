@@ -1,15 +1,20 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Cambo, Inter_Tight } from "next/font/google";
 import { IntakeProvider } from "./state/IntakeContext";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Matches the reference screenshots: serif headings (Cambo, falling back
+// to ui-serif/Georgia), sans-serif body (Inter Tight — the actual
+// reference used "Aspekta", a commercial font unavailable here, but
+// Inter Tight is explicitly next in that same font-family stack).
+const cambo = Cambo({
+  variable: "--font-serif",
+  weight: "400",
   subsets: ["latin"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const interTight = Inter_Tight({
+  variable: "--font-sans",
   subsets: ["latin"],
 });
 
@@ -21,7 +26,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+    <html lang="en" className={`${cambo.variable} ${interTight.variable}`}>
       <body>
         <IntakeProvider>{children}</IntakeProvider>
       </body>

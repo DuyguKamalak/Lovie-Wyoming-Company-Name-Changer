@@ -37,6 +37,9 @@ already-specced behavior don't need this ceremony.
 
 - **Framework**: Next.js (App Router, TypeScript). API routes run server-side
   so secrets never reach the browser.
+- **Styling**: Tailwind CSS v4 (`@theme` tokens in `app/globals.css` —
+  `brand-green`/`brand-black` colors, `font-serif`/`font-sans`). Utility
+  classes directly in JSX; no CSS Modules. `framer-motion` for animation.
 - **Hosting**: Vercel free tier.
 - **LLM**: Google Gemini (`gemini-2.0-flash` or newer flash tier) via the free
   Google AI Studio API key. Used for the conversational intake + structured
