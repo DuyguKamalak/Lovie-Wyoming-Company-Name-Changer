@@ -82,17 +82,16 @@ land; don't start a task whose dependencies aren't checked yet.
   (FR-007), designator validation (T004) blocking-with-warning before
   enabling download (FR-005), calls `/api/generate-pdf` (T007) on confirm.
 
-- [ ] **T014 — End-to-end manual QA**
+- [x] **T014 — End-to-end manual QA**
   Run the full flow for both an LLC and a Corp scenario per spec.md §9
   acceptance criteria; open each downloaded PDF and visually compare
   against a blank official form for correct field placement. Use the `run`
   skill to drive this in a real browser, not just unit tests.
-  **Partial**: LLC done in full during T013 (chat → review → download →
-  verified PDF content, see T013 commit). Corp attempt during T014 hit
-  the daily quota (T017) mid-conversation before reaching /review — the
-  agent's tool calls for the Corp fields looked correct in the partial
-  transcript, but the full review→download round trip for Corp is not
-  yet confirmed. Resume once quota resets or T017 is resolved.
+  LLC done in full during T013. Corp done in full after T017 (quota fix)
+  and two more real bugs found/fixed along the way (date format,
+  amendmentText not always recorded — see that commit). Both entity
+  types now verified: chat → review → download → actual PDF bytes
+  inspected and correct.
 
 - [ ] **T015 — Pre-launch form-currency check**
   Manually open the live URLs
