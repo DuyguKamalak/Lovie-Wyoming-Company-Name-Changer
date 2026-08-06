@@ -52,8 +52,12 @@ test("a word the user capitalised themselves is left alone", () => {
   assert.equal(formatFieldValue("currentName", "iRobot Holdings Inc."), "iRobot Holdings Inc.");
 });
 
-test("emails are trimmed and their domain lowercased, the local part left alone", () => {
-  assert.equal(formatFieldValue("email", " Jane.Doe@ACME.COM "), "Jane.Doe@acme.com");
+// An email is the user's own identifier, and the state writes to it — take it
+// exactly as given. Lowercasing the domain would be safe by spec, but it left
+// a half-changed address on the form, which is worse than either extreme.
+test("an email is taken exactly as typed, apart from surrounding whitespace", () => {
+  assert.equal(formatFieldValue("email", " Jane.Doe@ACME.COM "), "Jane.Doe@ACME.COM");
+  assert.equal(formatFieldValue("email", "JANE@ACME.COM"), "JANE@ACME.COM");
   assert.equal(formatFieldValue("email", "jane@acme.com"), "jane@acme.com");
 });
 
