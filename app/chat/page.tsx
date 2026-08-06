@@ -152,7 +152,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
   if (message.role === "user") {
     return (
       <motion.div
-        className="max-w-[80%] self-end whitespace-pre-wrap rounded-2xl bg-brand-black px-4 py-2.5 leading-relaxed text-white"
+        className="max-w-[80%] self-end whitespace-pre-wrap rounded-2xl bg-brand-green px-4 py-2.5 leading-relaxed text-brand-black"
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.2 }}

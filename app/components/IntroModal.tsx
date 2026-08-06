@@ -50,7 +50,11 @@ export function IntroModal({ open, onClose }: { open: boolean; onClose: () => vo
               mail or in person, with a $60 fee. You are responsible for
               reviewing, signing, and mailing it yourself.
             </p>
-            <BrandButton className="self-end" onClick={onClose} autoFocus>
+            {/* No autoFocus: on a short viewport where this modal's content
+                needs to scroll, the browser's default focus-scroll
+                behavior yanks the view straight to this button, hiding the
+                title above the fold — found via mobile-width testing. */}
+            <BrandButton className="self-end" onClick={onClose}>
               Okay
             </BrandButton>
           </motion.div>
