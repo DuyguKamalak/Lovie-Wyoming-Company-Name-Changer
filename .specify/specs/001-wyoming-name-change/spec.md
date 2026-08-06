@@ -187,22 +187,21 @@ gets filed with the state.
    registration ID field at all; it's not part of the data model.
 3. ~~Form P certification branching~~ — **RESOLVED**: three-way checkbox
    mapping confirmed against the printed form in §5.2.
-4. ~~Gemini free-tier rate limits in production~~ — **RESOLVED, and it's a
-   real constraint, not a formality**: hit it directly during T014 testing.
-   The current free tier for `gemini-flash-latest` (resolving today to
-   `gemini-3.6-flash`) is capped at **20 `generateContent` requests per
-   project per day** (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`).
-   Because the intake agent's tool-calling loop (agent.md) typically makes
-   2-4 `generateContent` calls per single user chat turn (one per
-   iteration until the model stops calling tools), 20 requests/day works
-   out to roughly **5-8 total user conversations per day, across every
-   visitor to the site combined** — not per-user, per-deployment. The
-   graceful 429 fallback (FR/plan.md section 3) means it fails
-   *visibly*, not silently, but the app would realistically go
-   unavailable to new users for the rest of most days after a handful of
-   conversations. This is a real product-level tradeoff of "free-tier
-   only" (constitution I), not a solved problem — see plan.md section 9
-   for options and the decision needed before this is launch-ready.
+4. ~~Gemini free-tier rate limits in production~~ — **RESOLVED**: hit a 20
+   requests/day wall directly during T014 testing on `gemini-flash-latest`
+   (resolves to `gemini-3.6-flash`), then confirmed via the project's own
+   Google AI Studio rate-limits dashboard that quota is per-model, not
+   per-key, and varies enormously by model on this project:
+   flagship "Flash" variants (3.6 Flash, 2.5 Flash) sit at **20 RPD**,
+   while **Lite variants (3.1 Flash Lite, 3.5 Flash Lite) sit at 500
+   RPD** — 25x more. Switched the default model to
+   `gemini-flash-lite-latest` (verified working through the full
+   tool-calling loop), which resolves to one of the 500-RPD Lite models.
+   At ~2-4 `generateContent` calls per chat turn, 500/day is roughly
+   **150+ conversations/day across all visitors** — comfortable for an
+   MVP. Decision (see plan.md section 9): ship on this model, no
+   multi-provider fallback for now; revisit if real usage proves it
+   insufficient.
 5. ~~pdf-lib compatibility smoke test~~ — **RESOLVED**: T002, see tasks.md.
 
 ## 9. Acceptance criteria (definition of done for this feature)

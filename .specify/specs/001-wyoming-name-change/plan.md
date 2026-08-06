@@ -205,41 +205,33 @@ the browser's own storage, same privacy posture as before. Add an explicit
 - Manual QA against spec.md §9 acceptance criteria: full flow for both
   entity types, opened output PDF compared against a blank official form.
 
-## 9. Known limitation: free-tier daily quota (needs a decision)
+## 9. Free-tier daily quota — investigated, decided
 
-Confirmed during T014 manual QA against the real API (not a spec at
-implementation time — an observed fact): the free tier for
-`gemini-flash-latest` is capped at **20 `generateContent` requests per
-project per day**. The intake agent's tool-calling loop (agent.md) makes
-2-4 of those calls per single user chat turn, so this deployment can
-support roughly **5-8 total conversations per day, across all visitors
-combined**, before every user gets the 429 fallback message for the rest
-of the day. This is not a bug to fix — it's the actual shape of "free
-Gemini API" today, and constitution I means we don't reach for a paid
-key to make it go away. Options, roughly cheapest-to-implement first:
+Confirmed during T014 manual QA against the real API: `gemini-flash-latest`
+(resolving to `gemini-3.6-flash`) is capped at 20 `generateContent`
+requests/project/day. Rather than guess at a fix, we pulled the project's
+actual Google AI Studio rate-limits dashboard, which shows quota is
+tracked **per model**, and varies sharply on this project:
 
-1. **Ship it as-is, disclose the limit.** Honest, zero extra work, matches
-   a genuinely low-traffic landing page. Risk: the tool goes dark for
-   most of most days after a handful of users.
-2. **Cut calls per turn.** The loop currently re-calls `generateContent`
-   once per tool-call iteration even when the model could batch multiple
-   tool calls into one response — worth checking, when this is revisited,
-   whether prompting for batched calls reduces the typical 2-4 down
-   closer to 1-2, stretching 20/day further without changing the product.
-3. **Multiple free API keys, rotated.** Each Google account gets its own
-   20/day allowance; a pool of a few keys multiplies capacity linearly.
-   Still "free tier only" per constitution I, but adds operational
-   complexity (key rotation, more places a key can leak) for a fragile,
-   quota-dependent gain.
-4. **A different free model/provider for the intake agent.** E.g. a
-   Gemma open model, or a different provider's free tier, might carry a
-   separate/higher daily allowance — unverified, would need the same
-   kind of real-API testing done here before trusting it, and changes
-   agent.md's assumptions about function-calling quality.
+| Model | RPD |
+|---|---|
+| Gemini 3.6 Flash (`flash-latest`) | 20 |
+| Gemini 2.5 Flash / Flash Lite | 20 |
+| **Gemini 3.1 Flash Lite** | **500** |
+| **Gemini 3.5 Flash Lite** | **500** |
+| Gemma 4 31B | 14,400 |
 
-No option is implemented — this needs a decision from the repo owner
-before the feature is considered launch-ready, tracked as a task in
-`tasks.md`.
+**Decision**: switched the default model to `gemini-flash-lite-latest`
+(§3), which resolves to one of the 500-RPD Lite models and was verified
+working through the full tool-calling loop in testing. At ~2-4 calls/turn,
+that's roughly 150+ conversations/day across all visitors — comfortable
+for an MVP. **No multi-provider fallback for now** (constitution IV — no
+speculative complexity ahead of a demonstrated need); revisit only if real
+usage shows 500/day is actually insufficient. If it ever is, the cheapest
+next step is GitHub Models (OpenAI-compatible, free via the repo owner's
+existing GitHub account, no new signup) as a 429-triggered fallback —
+NVIDIA NIM was also considered but requires a separate signup and doesn't
+publish a clear daily cap, so it's a worse first choice.
 
 ## 10. Pre-launch risk: form staleness
 

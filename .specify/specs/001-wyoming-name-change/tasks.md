@@ -106,9 +106,10 @@ land; don't start a task whose dependencies aren't checked yet.
   feature done, per CLAUDE.md — this handles user-submitted legal/business
   PII, so this isn't optional.
 
-- [ ] **T017 — Decide on the free-tier daily quota limitation**
-  Confirmed for real during T014: 20 `generateContent` requests/day on the
-  free tier, ~5-8 total conversations/day capacity. Repo owner picks one
-  of plan.md §9's options (ship as-is, cut calls/turn, key rotation,
-  different free model) — this blocks calling the feature launch-ready,
-  not the code itself.
+- [x] **T017 — Decide on the free-tier daily quota limitation**
+  Investigated via the project's own Google AI Studio rate-limits
+  dashboard: quota is per-model, Lite variants get 500 RPD vs 20 RPD for
+  flagship Flash. Decision: switched default model to
+  `gemini-flash-lite-latest` (~150+ conversations/day capacity), no
+  fallback provider for now — revisit only if real usage proves
+  insufficient (plan.md §9).
