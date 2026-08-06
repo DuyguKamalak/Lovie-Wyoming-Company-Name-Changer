@@ -90,14 +90,14 @@ export default function ReviewPage() {
               <span className="text-sm font-semibold">{field.label}</span>
               {field.multiline ? (
                 <textarea
-                  className="resize-y rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 font-sans text-base text-brand-black outline-none focus:border-[#a5b4fc]"
+                  className="resize-y rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 font-sans text-base text-brand-black outline-none focus:border-brand-green"
                   rows={3}
                   value={state.knownFields[field.key] ?? ""}
                   onChange={(e) => setField(field.key, e.target.value)}
                 />
               ) : (
                 <input
-                  className="rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-[#a5b4fc]"
+                  className="rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-brand-green"
                   type="text"
                   value={state.knownFields[field.key] ?? ""}
                   onChange={(e) => setField(field.key, e.target.value)}

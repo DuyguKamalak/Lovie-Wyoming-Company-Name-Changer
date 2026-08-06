@@ -15,8 +15,10 @@ import type { ChatMessage } from "@/lib/gemini";
 // type is always the first thing asked).
 const STARTER_SUGGESTIONS = ["I have a Wyoming LLC", "I have a Wyoming Corporation"];
 
+// Brand-green on hover, not the purple this accidentally shipped with —
+// every colored/interactive surface in the app uses the one brand green.
 const chipClass =
-  "rounded-full border border-[#d6d3d1] bg-[#fafaf9] px-4 py-2 text-sm text-[#292524] transition-colors hover:border-[#a5b4fc] hover:bg-[#f0eeff] disabled:opacity-50";
+  "rounded-full border border-[#d6d3d1] bg-[#fafaf9] px-4 py-2 text-sm text-[#292524] transition-colors hover:border-brand-green hover:bg-brand-green/15 active:scale-95 disabled:opacity-50 disabled:active:scale-100";
 
 export default function ChatPage() {
   const state = useIntakeState();
@@ -129,7 +131,7 @@ export default function ChatPage() {
             }}
           >
             <input
-              className="flex-1 rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-[#a5b4fc]"
+              className="flex-1 rounded-lg border border-[#e7e5e4] bg-white px-3 py-2 text-base text-brand-black outline-none focus:border-brand-green"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Type your answer…"
@@ -166,7 +168,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
     >
-      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#eef2ff]">
+      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-green/15">
         <LovieLogo size={28} />
       </div>
       <div className="whitespace-pre-wrap rounded-2xl bg-[#f5f5f4] px-4 py-2.5 leading-relaxed text-brand-black">
@@ -179,7 +181,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 function ThinkingBubble() {
   return (
     <div className="flex items-start gap-2 self-start">
-      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#eef2ff]">
+      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-brand-green/15">
         <LovieLogo size={28} />
       </div>
       <div className="flex items-center gap-1 rounded-2xl bg-[#f5f5f4] px-4 py-2.5">
